@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Compatibility patch for environments where window.fetch has only a getter
+      (function() {
+        try {
+          var origFetch = window.fetch ? window.fetch.bind(window) : null;
+          var customFetch = origFetch;
+          var proto = (typeof Window !== 'undefined' && Window.prototype) || window;
+
+          try {
+            Object.defineProperty(proto, 'fetch', {
+              get: function() { return customFetch; },
+              set: function(fn) { customFetch = fn; },
+              configurable: true,
+              enumerable: true
+            });
+          } catch (_) {}
+
+          try {
+            Object.defineProperty(window, 'fetch', {
+              get: function() { return customFetch; },
+              set: function(fn) { customFetch = fn; },
+              configurable: true,
+              enumerable: true
+            });
+          } catch (_) {}
+        } catch (e) {}
+      })();
+    </script>
+    <title>EcoSort AI - Phân Loại Rác Tích Điểm</title>
+    <meta name="description" content="Hệ thống AI nhận diện phân loại rác thông minh tích điểm kết hợp kênh phản ánh cộng đồng." />
+    <meta property="og:title" content="EcoSort AI - Phân Loại Rác Tích Điểm" />
+    <meta property="og:description" content="Hệ thống AI nhận diện phân loại rác thông minh tích điểm kết hợp kênh phản ánh cộng đồng." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-slate-950 text-slate-100 antialiased selection:bg-emerald-500 selection:text-white font-['Plus_Jakarta_Sans',sans-serif]">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
