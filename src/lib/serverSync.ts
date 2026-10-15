@@ -1,4 +1,4 @@
-import { LeaderboardEntry, UserProfile, WasteCategory } from '../types';
+import { LeaderboardEntry, UserProfile, WasteCategory, MisclassificationFeedbackPayload } from '../types';
 
 export interface RecordWastePayload {
   userId?: string;
@@ -177,6 +177,31 @@ export async function resetAllPlayersPointsOnServer(): Promise<{
     return {
       success: false,
       error: err.message || 'Lỗi kết nối khi đặt lại điểm',
+    };
+  }
+}
+
+/**
+ * Submit misclassification feedback from student for STEM review.
+ * Does NOT auto-promote suggestions to ground-truth labels.
+ */
+export async function submitMisclassificationFeedback(payload: MisclassificationFeedbackPayload): Promise<{
+  success: boolean;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/feedback/misclassification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || 'Lỗi kết nối khi gửi phản ánh',
     };
   }
 }

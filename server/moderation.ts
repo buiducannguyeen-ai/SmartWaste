@@ -198,10 +198,10 @@ Hãy phản hồi kết quả dưới dạng JSON theo đúng schema.`;
 
       // Priority ordered models: lightweight high-capacity first to avoid 503 high demand spikes
       const candidateModels = [
-        'gemini-3.1-flash-lite',
-        'gemini-3.6-flash',
+        'gemini-3.5-flash-lite',
+        'gemini-3.7-flash',
         'gemini-3.8-flash',
-        'gemini-flash-latest',
+        'gemini-3.5-flash',
       ];
       let response: any = null;
       let lastErr: any = null;
@@ -269,7 +269,7 @@ Hãy phản hồi kết quả dưới dạng JSON theo đúng schema.`;
           });
 
           const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error(`Gemini Moderation timeout after 10s on ${modelName}`)), 10000)
+            setTimeout(() => reject(new Error(`Gemini Moderation timeout after 12s on ${modelName}`)), 12000)
           );
 
           response = await Promise.race([generatePromise, timeoutPromise]);
@@ -278,10 +278,10 @@ Hãy phản hồi kết quả dưới dạng JSON theo đúng schema.`;
           }
         } catch (modelErr: any) {
           lastErr = modelErr;
-          console.warn(`Gemini Moderation ${modelName} failed (${modelErr?.message}), trying next candidate...`);
+          console.warn(`Gemini Moderation ${modelName} notice (${modelErr?.message}), trying next candidate...`);
           const isTransient = String(modelErr?.message || '').includes('503') || String(modelErr?.message || '').includes('429');
           if (isTransient) {
-            await new Promise((r) => setTimeout(r, 400));
+            await new Promise((r) => setTimeout(r, 200));
           }
         }
       }

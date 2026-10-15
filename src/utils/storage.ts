@@ -70,11 +70,12 @@ export const DEFAULT_AVATARS = [
 export const INITIAL_LEADERBOARD: LeaderboardEntry[] = [];
 
 export function getLevelTitle(points: number): string {
-  if (points >= 50) return 'Đại Sứ Hành Tinh Xanh';
-  if (points >= 35) return 'Hiệp Sĩ Môi Trường';
-  if (points >= 20) return 'Chuyên Gia Tái Chế';
-  if (points >= 10) return 'Chiến Binh Phân Loại';
-  return 'Tập Sự Sinh Thái STEM';
+  if (points >= 100) return 'Đại Sứ Hành Tinh Xanh';
+  if (points >= 60) return 'Chuyên Gia Tái Chế STEM';
+  if (points >= 30) return 'Hiệp Sĩ Môi Trường';
+  if (points >= 15) return 'Chiến Binh Phân Loại';
+  if (points >= 5) return 'Tập Sự Phân Loại';
+  return 'Thành Viên Mới';
 }
 
 export function loadUserProfile(): UserProfile | null {
@@ -187,8 +188,24 @@ export function loadHistory(): WasteHistoryRecord[] {
 
 export function saveHistory(records: WasteHistoryRecord[]) {
   try {
-    localStorage.setItem(STORAGE_KEYS.HISTORY, JSON.stringify(records.slice(0, 100))); // keep latest 100
-  } catch (e) {}
+    const trimmed = records.slice(0, 100).map((r) => {
+      // If rawImage is larger than 60KB, strip or keep thumbnail only to prevent localStorage quota exhaustion
+      if (r.rawImage && r.rawImage.length > 60000) {
+        return {
+          ...r,
+          rawImage: r.rawImage.slice(0, 20000), // safety boundary
+        };
+      }
+      return r;
+    });
+    localStorage.setItem(STORAGE_KEYS.HISTORY, JSON.stringify(trimmed));
+  } catch (e) {
+    console.warn('LocalStorage quota warning in saveHistory, pruning older images:', e);
+    try {
+      const lightweight = records.slice(0, 30).map((r) => ({ ...r, rawImage: undefined }));
+      localStorage.setItem(STORAGE_KEYS.HISTORY, JSON.stringify(lightweight));
+    } catch {}
+  }
 }
 
 export function clearHistory() {

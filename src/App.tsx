@@ -328,6 +328,15 @@ export default function App() {
         return;
       }
 
+      // Handle uncertain AI classifications: show notice with 0 points, NEVER award points
+      if (result.isUncertain) {
+        setActiveNotification({
+          ...result,
+          points: 0,
+        });
+        return;
+      }
+
       // 1. Verification: Award points for both live camera scanning and file uploads (unless reference only)
       const isValidScan = (result.source === 'webcam' || result.source === 'file_upload' || !result.source) && !result.isReferenceOnly;
 
@@ -577,10 +586,13 @@ export default function App() {
         onSelectTab={setActiveTab}
       />
 
-      {/* Floating Points Notification */}
+      {/* Floating Points & AI Confidence Notification */}
       <PointsNotification
         result={activeNotification}
         onDismiss={() => setActiveNotification(null)}
+        onRescan={() => window.dispatchEvent(new CustomEvent('ecosort:rescan'))}
+        currentUserId={currentUser?.id}
+        currentUserName={currentUser?.name}
       />
 
       {/* Anti-Cheat Duplicate Warning Toast */}

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { History, Trash2, ArrowUpRight, Filter, Clock, Sparkles, Sprout, Recycle, ShieldAlert, BarChart3 } from 'lucide-react';
+import { History, Trash2, ArrowUpRight, Filter, Clock, Sparkles, Sprout, Recycle, ShieldAlert, BarChart3, CheckCircle2, MinusCircle, AlertTriangle } from 'lucide-react';
 import { WasteHistoryRecord, WasteCategory } from '../types';
 import { playClickSound } from '../utils/audio';
 
@@ -240,6 +240,47 @@ export const ClassificationHistory: React.FC<ClassificationHistoryProps> = ({
                         <span>•</span>
                         <span className="text-slate-300 truncate font-medium">{item.instruction || item.recyclingTip || item.description}</span>
                       </div>
+
+                      {/* Display preparation steps checklist if recorded */}
+                      {item.preparationSteps && item.preparationSteps.length > 0 && (
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          {item.preparationSteps.map((step, sIdx) => {
+                            const isDone = step.status === 'completed';
+                            const isNa = step.status === 'not_applicable';
+                            return (
+                              <span
+                                key={step.id || sIdx}
+                                className={`text-[10px] px-2 py-0.5 rounded-md font-semibold flex items-center gap-1 border ${
+                                  isDone
+                                    ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                                    : isNa
+                                    ? 'bg-slate-800 border-slate-700 text-slate-400'
+                                    : 'bg-amber-950/60 border-amber-500/40 text-amber-300'
+                                }`}
+                                title={step.reason || step.instruction}
+                              >
+                                {isDone ? (
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                ) : isNa ? (
+                                  <MinusCircle className="w-3 h-3 text-slate-400" />
+                                ) : (
+                                  <Clock className="w-3 h-3 text-amber-400" />
+                                )}
+                                <span>{step.instruction}</span>
+                                {isNa && <span className="text-slate-500 font-normal">(K.áp dụng)</span>}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Special handling notice badge */}
+                      {(item.isHazardousOrSpecial || item.specialHandlingNotice) && (
+                        <div className="mt-1.5 text-[10px] font-bold text-rose-300 flex items-center gap-1 bg-rose-950/50 border border-rose-500/40 px-2 py-0.5 rounded-md w-fit">
+                          <ShieldAlert className="w-3 h-3 text-rose-400" />
+                          <span>Thu gom riêng: {item.specialHandlingNotice || 'Pin / rác nguy hại cần điểm thu gom riêng'}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 

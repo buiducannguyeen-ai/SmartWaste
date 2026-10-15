@@ -61,10 +61,24 @@ export interface StoredWasteReport {
   resolutionNote?: string;
 }
 
+export interface StoredMisclassificationFeedback {
+  id: string;
+  timestamp: number;
+  userId?: string;
+  userName?: string;
+  itemName: string;
+  aiCategory: string;
+  aiConfidence: number;
+  userSuggestedCategory: 'organic' | 'recyclable' | 'inorganic';
+  userNote?: string;
+  thumbnail?: string;
+}
+
 interface StoreData {
   players: StoredPlayer[];
   history: StoredHistoryItem[];
   reports: StoredWasteReport[];
+  misclassifications?: StoredMisclassificationFeedback[];
 }
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -102,6 +116,7 @@ let cachedData: StoreData = {
   players: [],
   history: [],
   reports: [],
+  misclassifications: [],
 };
 
 const INITIAL_VERIFIED_REPORTS: StoredWasteReport[] = [];
@@ -133,6 +148,7 @@ function loadDataFromDisk(): boolean {
           players: parsed.players,
           history: Array.isArray(parsed.history) ? parsed.history : [],
           reports: Array.isArray(parsed.reports) ? parsed.reports : [],
+          misclassifications: Array.isArray(parsed.misclassifications) ? parsed.misclassifications : [],
         };
         return true;
       }
@@ -642,11 +658,17 @@ export async function syncLeaderboardFromSupabase(): Promise<void> {
   if (!supabase) return;
 
   try {
-    const { data: dbPlayers, error } = await supabase
+    const fetchPromise = supabase
       .from('players')
       .select('*')
       .order('total_points', { ascending: false })
       .order('correct_count', { ascending: false });
+
+    const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) =>
+      setTimeout(() => resolve({ data: null, error: { message: 'Supabase sync timeout (2.5s)' } }), 2500)
+    );
+
+    const { data: dbPlayers, error } = await Promise.race([fetchPromise, timeoutPromise]);
 
     if (!error && Array.isArray(dbPlayers) && dbPlayers.length > 0) {
       for (const row of dbPlayers) {
@@ -693,10 +715,16 @@ export async function syncWasteReportsFromSupabase(): Promise<void> {
   if (!supabase) return;
 
   try {
-    const { data: dbReports, error } = await supabase
+    const fetchPromise = supabase
       .from('waste_reports')
       .select('*')
       .order('created_at', { ascending: false });
+
+    const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) =>
+      setTimeout(() => resolve({ data: null, error: { message: 'Supabase sync timeout (2.5s)' } }), 2500)
+    );
+
+    const { data: dbReports, error } = await Promise.race([fetchPromise, timeoutPromise]);
 
     if (!error && Array.isArray(dbReports) && dbReports.length > 0) {
       cachedData.reports = dbReports.map((row: any) => ({
@@ -729,6 +757,45 @@ export async function syncWasteReportsFromSupabase(): Promise<void> {
   } catch (err) {
     console.warn('[EcoSort Store] Notice syncing waste reports from Supabase:', err);
   }
+}
+
+// Misclassification user feedback storage (for STEM review, not auto-labeling)
+export function addMisclassificationFeedback(data: {
+  userId?: string;
+  userName?: string;
+  itemName: string;
+  aiCategory: string;
+  aiConfidence: number;
+  userSuggestedCategory: 'organic' | 'recyclable' | 'inorganic';
+  userNote?: string;
+  thumbnail?: string;
+}): StoredMisclassificationFeedback {
+  const newFeedback: StoredMisclassificationFeedback = {
+    id: 'fb-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    timestamp: Date.now(),
+    userId: data.userId,
+    userName: data.userName || 'Thí sinh',
+    itemName: data.itemName,
+    aiCategory: data.aiCategory,
+    aiConfidence: data.aiConfidence,
+    userSuggestedCategory: data.userSuggestedCategory,
+    userNote: data.userNote || '',
+    thumbnail: data.thumbnail,
+  };
+
+  if (!cachedData.misclassifications) {
+    cachedData.misclassifications = [];
+  }
+  cachedData.misclassifications.unshift(newFeedback);
+  if (cachedData.misclassifications.length > 200) {
+    cachedData.misclassifications = cachedData.misclassifications.slice(0, 200);
+  }
+  saveDataToDisk();
+  return newFeedback;
+}
+
+export function getMisclassificationFeedbacks(): StoredMisclassificationFeedback[] {
+  return cachedData.misclassifications || [];
 }
 
 // Preload existing Supabase players and reports into memory on startup

@@ -251,9 +251,56 @@
       "inorganicCount": 1,
       "lastActive": 1789782350636,
       "createdAt": 1789781781356
+    },
+    {
+      "id": "user-1792057705058",
+      "name": "Thí sinh STEM",
+      "email": "thsinhstem@ecosort.stem",
+      "organization": "Khối Sáng Tạo STEM",
+      "avatar": "🌱",
+      "totalPoints": 9,
+      "correctCount": 3,
+      "organicCount": 0,
+      "recyclableCount": 0,
+      "inorganicCount": 3,
+      "lastActive": 1792057764264,
+      "createdAt": 1792057704879
     }
   ],
   "history": [
+    {
+      "id": "log-1792057764264-qpxv",
+      "userId": "user-1792057705058",
+      "userName": "Thí sinh STEM",
+      "itemName": "Pin cũ",
+      "category": "inorganic",
+      "points": 3,
+      "confidence": 0.95,
+      "source": "webcam",
+      "timestamp": 1792057764264
+    },
+    {
+      "id": "log-1792057734155-0soa",
+      "userId": "user-1792057705058",
+      "userName": "Thí sinh STEM",
+      "itemName": "Pin cũ",
+      "category": "inorganic",
+      "points": 3,
+      "confidence": 0.95,
+      "source": "webcam",
+      "timestamp": 1792057734155
+    },
+    {
+      "id": "log-1792057704881-wc7y",
+      "userId": "user-1792057705058",
+      "userName": "Thí sinh STEM",
+      "itemName": "Pin kiềm cũ",
+      "category": "inorganic",
+      "points": 3,
+      "confidence": 0.95,
+      "source": "webcam",
+      "timestamp": 1792057704881
+    },
     {
       "id": "log-1789781896717-2l1g",
       "userId": "user-1789781780266",
@@ -355,6 +402,19 @@
       "status": "reported",
       "createdAt": 1789450713257,
       "upvotes": 4
+    }
+  ],
+  "misclassifications": [
+    {
+      "id": "fb-1792059131453-ov3j",
+      "timestamp": 1792059131453,
+      "userId": "test-user-1",
+      "userName": "Thí sinh Thử nghiệm",
+      "itemName": "Vỏ hộp sữa giấy tráng nhôm",
+      "aiCategory": "inorganic",
+      "aiConfidence": 0.55,
+      "userSuggestedCategory": "recyclable",
+      "userNote": "Hộp sữa có thể bóc tách để tái chế bột giấy"
     }
   ]
 }

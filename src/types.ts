@@ -1,5 +1,15 @@
 export type WasteCategory = 'organic' | 'recyclable' | 'inorganic';
 
+export type PreparationStepStatus = 'pending' | 'completed' | 'not_applicable';
+
+export interface PreparationStep {
+  id: string;
+  instruction: string;
+  reason?: string;
+  isSafetyWarning?: boolean;
+  status?: PreparationStepStatus;
+}
+
 export interface WasteClassificationResult {
   category: WasteCategory;
   itemName: string;
@@ -17,6 +27,25 @@ export interface WasteClassificationResult {
   isScreenOrPhotoSpoof?: boolean;
   spoofReason?: string;
   fingerprintHash?: string;
+  isUncertain?: boolean;
+  uncertaintyReason?: string;
+  needsReview?: boolean;
+  userReportedIncorrect?: boolean;
+  userSuggestedCategory?: WasteCategory;
+  preparationSteps?: PreparationStep[];
+  specialHandlingNotice?: string;
+  isHazardousOrSpecial?: boolean;
+}
+
+export interface MisclassificationFeedbackPayload {
+  userId?: string;
+  userName?: string;
+  itemName: string;
+  aiCategory: string;
+  aiConfidence: number;
+  userSuggestedCategory: WasteCategory;
+  userNote?: string;
+  thumbnail?: string;
 }
 
 export interface DuplicateAlertInfo {

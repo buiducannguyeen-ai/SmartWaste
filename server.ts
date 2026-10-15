@@ -18,10 +18,12 @@ import {
   updateWasteReportStatus,
   upvoteWasteReport,
   syncLeaderboardFromSupabase,
-  StoredWasteReport,
-} from "./server/store";
-import { moderateWasteReport } from "./server/moderation";
-import { createAndSendPin, verifySubmittedPin } from "./server/emailAuth";
+  addMisclassificationFeedback,
+  getMisclassificationFeedbacks,
+} from "./server/store.ts";
+import type { StoredWasteReport } from "./server/store.ts";
+import { moderateWasteReport } from "./server/moderation.ts";
+import { createAndSendPin, verifySubmittedPin } from "./server/emailAuth.ts";
 
 dotenv.config();
 
@@ -127,12 +129,30 @@ BƯỚC 3: KIỂM TRA CHỐNG GIAN LẬN (Anti-Cheat Spoof Check):
 - Kiểm tra xem người dùng có đang giơ một màn hình điện thoại, máy tính bảng hoặc ảnh in 2D phẳng lên trước camera để giả mạo quét ảnh lấy điểm thay vì rác thật hay không (nhận diện qua viền màn hình, phản quang đèn nền, lưới điểm ảnh hiển thị, góc phẳng 2D).
 - Nếu phát hiện rõ ràng là giơ màn hình điện thoại hoặc ảnh 2D để gian lận, hãy đặt isScreenOrPhotoSpoof = true và giải thích trong spoofReason.
 
+BƯỚC 4: HƯỚNG DẪN 1-2 VIỆC CẦN THỰC HIỆN TRƯỚC KHI BỎ RÁC (preparationSteps):
+- Trả về tối đa 2 bước xử lý cụ thể, ngắn gọn, dễ hiểu và phù hợp nhất cho học sinh đối với vật thể này trước khi bỏ vào thùng.
+- Phù hợp với chất liệu và vật thể thực tế:
+  * Chai nhựa còn nước/chất lỏng: Đổ hết nước thừa; đóng nắp hoặc tháo tách nắp tùy quy định thu gom.
+  * Hộp sữa giấy: Đổ hết sữa thừa, làm sạch sơ hoặc ép dẹp nếu phù hợp.
+  * Hộp nhựa đựng thức ăn: Loại bỏ hoàn toàn thức ăn thừa, tráng sơ sạch dầu mỡ.
+  * Giấy dính dầu mỡ / khăn ướt: Xếp vào rác vô cơ (giải thích ngắn vì dầu mỡ làm hỏng quá trình tái chế giấy sạch).
+  * Pin cũ / đồ điện tử / bóng đèn: Xếp vào rác vô cơ (kèm cảnh báo an toàn thu gom riêng). CẢNH BÁO AN TOÀN TUYỆT ĐỐI: Không bỏ chung thùng rác sinh hoạt thông thường, chuyển đến điểm thu gom pin chuyên dụng; tuyệt đối không đập, cạy hoặc xử lý nguy hiểm. Đặt isSafetyWarning = true.
+  * Vật sắc nhọn (mảnh chai vỡ, kim tiêm, dao lam): Gói bọc kỹ đầu nhọn bằng giấy dày hoặc bìa carton trước khi bỏ thùng rác vô cơ để bảo vệ người thu gom. Đặt isSafetyWarning = true.
+  * Rác hữu cơ sạch (vỏ chuối, rau thừa): Bỏ trực tiếp vào thùng hữu cơ (không yêu cầu rửa hoặc làm sạch không cần thiết).
+- KHÔNG mặc định mọi vật dụng đều phải rửa, tháo rời hoặc tách nắp nếu không cần thiết.
+- Với pin, vật sắc nhọn, rác nguy hại, PHẢI ưu tiên an toàn, hướng dẫn thu gom riêng, KHÔNG yêu cầu học sinh tự tháo hay xử lý nguy hiểm.
+
 Yêu cầu trả về JSON chuẩn theo schema:
 - isWaste: boolean, true nếu là rác thải, false nếu không phải rác hoặc không nhận diện được.
 - category: "organic", "recyclable", "inorganic", hoặc "unknown" (nếu isWaste=false).
 - itemName: tên ngắn gọn tiếng Việt của món rác hoặc vật thể trong ảnh.
-- points: 1 nếu là organic, 2 nếu là recyclable, 3 nếu là inorganic, 0 nếu không phải rác.
-- confidence: độ tin cậy từ 0.70 đến 0.99.
+- points: 1 nếu là organic, 2 nếu là recyclable, 3 nếu là inorganic, 0 nếu không phải rác hoặc chưa chắc chắn.
+- confidence: số thực từ 0.0 đến 1.0 biểu thị độ tin cậy ước tính của AI (hãy thể hiện trung thực mức độ chắc chắn; nếu ảnh mờ, khuất góc, không rõ vật thể hoặc phân vân giữa các nhóm thì cho điểm số confidence thấp phản ánh đúng mức độ không chắc chắn, không ép buộc khoảng cố định).
+- isUncertain: boolean, true nếu AI chưa chắc chắn về loại rác này, không rõ vật thể hoặc phân vân giữa các nhóm.
+- uncertaintyReason: nếu isUncertain=true, ghi lý do tiếng Việt (ví dụ: "AI chưa chắc chắn về vật thể này. Vui lòng chụp lại ở nơi đủ ánh sáng hoặc chọn báo cáo AI nhận nhầm.").
+- preparationSteps: mảng tối đa 2 bước thực hiện trước khi bỏ rác (mỗi bước có id, instruction, reason, isSafetyWarning).
+- specialHandlingNotice: chuỗi hướng dẫn thu gom an toàn nếu là pin, vật nhọn hoặc rác nguy hại.
+- isHazardousOrSpecial: boolean, true nếu là pin cũ, mảnh vỡ hoặc vật cần điểm thu gom riêng.
 - description: giải thích 1 câu ngắn về chất liệu và tính chất phân hủy.
 - binColor: màu thùng rác tương ứng ("green" cho hữu cơ, "yellow" cho tái chế, "orange" cho vô cơ, "gray" nếu không xác định).
 - recyclingTip: lời khuyên bảo vệ môi trường và cách bỏ rác chuẩn STEM cho học sinh.
@@ -142,12 +162,12 @@ Yêu cầu trả về JSON chuẩn theo schema:
 - spoofReason: chuỗi mô tả nếu phát hiện gian lận màn hình.
 ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
 
-      // Priority ordered models: lightweight high-capacity first to avoid 503 high demand spikes
+      // Priority ordered models: ultra-fast lightweight models first to ensure instant response (<3s) without 503 high demand spikes
       const candidateModels = [
-        "gemini-3.1-flash-lite",
-        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.7-flash",
         "gemini-3.8-flash",
-        "gemini-flash-latest",
+        "gemini-3.5-flash",
       ];
       let response: any = null;
       let lastErr: any = null;
@@ -186,11 +206,41 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
                   },
                   points: {
                     type: Type.INTEGER,
-                    description: "1 cho organic, 2 cho recyclable, 3 cho inorganic, 0 nếu không phải rác",
+                    description: "1 cho organic, 2 cho recyclable, 3 cho inorganic, 0 nếu không phải rác hoặc chưa chắc chắn",
                   },
                   confidence: {
                     type: Type.NUMBER,
-                    description: "Độ tin cậy từ 0.70 đến 0.99",
+                    description: "Độ tin cậy ước lượng từ 0.0 đến 1.0 (trung thực với độ chắc chắn)",
+                  },
+                  isUncertain: {
+                    type: Type.BOOLEAN,
+                    description: "True nếu AI chưa chắc chắn về vật thể hoặc loại rác này",
+                  },
+                  uncertaintyReason: {
+                    type: Type.STRING,
+                    description: "Lý do chưa chắc chắn nếu isUncertain=true",
+                  },
+                  preparationSteps: {
+                    type: Type.ARRAY,
+                    description: "Tối đa 2 bước xử lý cụ thể trước khi bỏ rác cho học sinh",
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        id: { type: Type.STRING },
+                        instruction: { type: Type.STRING, description: "Hành động ngắn gọn 1 câu" },
+                        reason: { type: Type.STRING, description: "Lý do vì sao cần làm" },
+                        isSafetyWarning: { type: Type.BOOLEAN, description: "True nếu là cảnh báo an toàn cho pin, vật nhọn, độc hại" },
+                      },
+                      required: ["id", "instruction"],
+                    },
+                  },
+                  specialHandlingNotice: {
+                    type: Type.STRING,
+                    description: "Cảnh báo an toàn hoặc hướng dẫn thu gom riêng nếu là pin, vật nhọn, rác nguy hại",
+                  },
+                  isHazardousOrSpecial: {
+                    type: Type.BOOLEAN,
+                    description: "True nếu là pin cũ, mảnh vỡ hoặc vật cần điểm thu gom riêng",
                   },
                   description: {
                     type: Type.STRING,
@@ -235,9 +285,9 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
             },
           });
 
-          // 10-second timeout per model candidate
+          // 12-second timeout per model candidate to allow full vision inference & JSON schema generation
           const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error(`Gemini Vision timeout after 10s on ${modelName}`)), 10000)
+            setTimeout(() => reject(new Error(`Gemini Vision timeout after 12s on ${modelName}`)), 12000)
           );
 
           response = await Promise.race([generatePromise, timeoutPromise]);
@@ -246,11 +296,11 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
           }
         } catch (modelErr: any) {
           lastErr = modelErr;
-          console.warn(`Gemini Vision ${modelName} failed (${modelErr?.message}), trying next candidate...`);
+          console.warn(`Gemini Vision ${modelName} notice (${modelErr?.message}), trying next candidate...`);
           // If transient overload (503 / 429), yield briefly before next candidate
           const isTransient = String(modelErr?.message || "").includes("503") || String(modelErr?.message || "").includes("429");
           if (isTransient) {
-            await new Promise((r) => setTimeout(r, 400));
+            await new Promise((r) => setTimeout(r, 200));
           }
         }
       }
@@ -297,6 +347,35 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
         });
       }
 
+      // Configurable confidence uncertainty threshold (default 0.60)
+      const UNCERTAINTY_THRESHOLD = Number(process.env.CONFIDENCE_UNCERTAINTY_THRESHOLD) || 0.60;
+      const rawConf = typeof result.confidence === "number" ? result.confidence : 0.50;
+      const normalizedConfidence = Math.max(0, Math.min(1, rawConf));
+      result.confidence = normalizedConfidence;
+
+      // Check if AI is uncertain or confidence is below threshold
+      const isLowConfidence = normalizedConfidence < UNCERTAINTY_THRESHOLD;
+      const isExplicitUncertain = result.isUncertain === true || result.category === "uncertain";
+
+      if (isLowConfidence || isExplicitUncertain) {
+        result.isUncertain = true;
+        result.points = 0; // CRITICAL: Uncertain cases NEVER receive points
+        result.uncertaintyReason =
+          "AI chưa chắc chắn về vật thể này. Vui lòng chụp lại ở nơi đủ ánh sáng hoặc chọn báo cáo AI nhận nhầm.";
+
+        return res.json({
+          success: true,
+          mode: "gemini-ai",
+          isUncertain: true,
+          data: {
+            ...result,
+            isUncertain: true,
+            points: 0,
+            uncertaintyReason: result.uncertaintyReason,
+          },
+        });
+      }
+
       // Ensure points and category align strictly with rules
       if (result.category === "organic") {
         result.points = 1;
@@ -318,6 +397,78 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
         });
       }
 
+      // Standardize 1-2 preparation steps (default status: 'pending')
+      if (Array.isArray(result.preparationSteps) && result.preparationSteps.length > 0) {
+        result.preparationSteps = result.preparationSteps.slice(0, 2).map((s: any, idx: number) => ({
+          id: s.id || `step-${idx + 1}`,
+          instruction: String(s.instruction || "").trim(),
+          reason: s.reason ? String(s.reason).trim() : undefined,
+          isSafetyWarning: Boolean(s.isSafetyWarning),
+          status: "pending",
+        }));
+      } else {
+        const itemNameLower = (result.itemName || "").toLowerCase();
+        const steps: any[] = [];
+        if (itemNameLower.includes("pin") || itemNameLower.includes("ắc quy") || itemNameLower.includes("bóng đèn")) {
+          steps.push({
+            id: "step-1",
+            instruction: "Không bỏ vào thùng rác thường, gom riêng chuyển điểm thu gom pin",
+            reason: "Chứa chì và hóa chất độc hại, cần thu gom nguy hại riêng",
+            isSafetyWarning: true,
+            status: "pending",
+          });
+        } else if (itemNameLower.includes("chai") || itemNameLower.includes("lon") || itemNameLower.includes("hộp")) {
+          steps.push({
+            id: "step-1",
+            instruction: "Đổ hết nước hoặc thức ăn thừa bên trong",
+            reason: "Tránh làm ướt các loại rác tái chế khác và giữ vệ sinh",
+            status: "pending",
+          });
+          if (itemNameLower.includes("sữa") || itemNameLower.includes("carton") || itemNameLower.includes("nhựa")) {
+            steps.push({
+              id: "step-2",
+              instruction: "Làm sạch sơ hoặc ép dẹp gọn gàng",
+              reason: "Tiết kiệm thể tích thùng rác",
+              status: "pending",
+            });
+          }
+        } else if (itemNameLower.includes("mảnh vỡ") || itemNameLower.includes("kính") || itemNameLower.includes("thủy tinh vỡ")) {
+          steps.push({
+            id: "step-1",
+            instruction: "Bọc kín phần sắc nhọn bằng bìa cứng hoặc giấy báo dày",
+            reason: "Bảo đảm an toàn cho người thu gom rác",
+            isSafetyWarning: true,
+            status: "pending",
+          });
+        } else if (result.category === "organic") {
+          steps.push({
+            id: "step-1",
+            instruction: "Bỏ trực tiếp vào thùng rác hữu cơ xanh lá",
+            reason: "Ủ thành phân compost vi sinh cho cây trồng",
+            status: "pending",
+          });
+        } else {
+          steps.push({
+            id: "step-1",
+            instruction: "Kiểm tra và phân loại đúng thùng quy định",
+            reason: "Giúp quy trình thu gom đạt chuẩn môi trường",
+            status: "pending",
+          });
+        }
+        result.preparationSteps = steps;
+      }
+
+      // Check for hazardous or special items (batteries, chemicals, sharps)
+      const isSpecialHazardous =
+        result.isHazardousOrSpecial === true ||
+        (result.itemName && /pin|ắc quy|pin cúc|nhiệt kế|thủy ngân|kim tiêm|dao lam|bóng đèn huỳnh quang/i.test(result.itemName));
+      if (isSpecialHazardous) {
+        result.isHazardousOrSpecial = true;
+        result.specialHandlingNotice =
+          result.specialHandlingNotice ||
+          "Lưu ý an toàn: Đây là rác thải đặc biệt / nguy hại. Không bỏ vào thùng rác tái chế hay hữu cơ thông thường; vui lòng mang đến điểm thu gom rác nguy hại chuyên dụng.";
+      }
+
       return res.json({
         success: true,
         mode: "gemini-ai",
@@ -335,6 +486,80 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
   } catch (error: any) {
     console.error("Classification route error:", error);
     res.status(500).json({ success: false, error: "Lỗi xử lý hình ảnh", details: error.message });
+  }
+});
+
+// ==============================================================================
+// AI MISCLASSIFICATION FEEDBACK & AUDIT APIS (TIẾP NHẬN PHẢN HỒI NHẬN NHẦM)
+// ==============================================================================
+
+/**
+ * Endpoint for students to report misclassifications or suggest correct category.
+ * NOTE: Stored solely for expert evaluation/audit.
+ * Does NOT auto-promote user suggestions to ground-truth labels nor artificially inflate accuracy.
+ */
+app.post("/api/feedback/misclassification", (req, res) => {
+  try {
+    const {
+      userId,
+      userName,
+      itemName,
+      aiCategory,
+      aiConfidence,
+      userSuggestedCategory,
+      userNote,
+      thumbnail,
+    } = req.body;
+
+    if (!itemName || !userSuggestedCategory) {
+      return res.status(400).json({
+        success: false,
+        error: "Thiếu thông tin vật thể hoặc nhóm rác đề xuất (itemName, userSuggestedCategory required)",
+      });
+    }
+
+    if (!["organic", "recyclable", "inorganic"].includes(userSuggestedCategory)) {
+      return res.status(400).json({
+        success: false,
+        error: "Nhóm rác đề xuất không hợp lệ (phải là organic, recyclable hoặc inorganic)",
+      });
+    }
+
+    const saved = addMisclassificationFeedback({
+      userId,
+      userName: userName ? String(userName).trim() : "Thí sinh STEM",
+      itemName: String(itemName).trim(),
+      aiCategory: String(aiCategory || "unknown"),
+      aiConfidence: typeof aiConfidence === "number" ? aiConfidence : 0,
+      userSuggestedCategory,
+      userNote: userNote ? String(userNote).trim() : "",
+      thumbnail: thumbnail ? String(thumbnail).slice(0, 15000) : undefined,
+    });
+
+    return res.json({
+      success: true,
+      message:
+        "Đã tiếp nhận báo cáo phân loại nhầm của bạn để chuyên môn STEM xem xét đánh giá. Ý kiến người dùng được lưu trữ phục vụ phân tích độc lập, không tự động coi là nhãn chuẩn hay dùng để tự nâng điểm số/độ chính xác AI.",
+      feedbackId: saved.id,
+      feedback: saved,
+    });
+  } catch (err: any) {
+    console.error("Lỗi tiếp nhận báo cáo phân loại nhầm:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Audit query for misclassification reports (for STEM teacher/jury review)
+app.get("/api/feedback/misclassification", (_req, res) => {
+  try {
+    const list = getMisclassificationFeedbacks();
+    res.json({
+      success: true,
+      feedbacks: list,
+      count: list.length,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -1147,13 +1372,6 @@ app.post("/api/sheets/register", async (req, res) => {
 });
 
 async function startServer() {
-  // Initialize multi-device store and sync with Supabase
-  try {
-    await initStore();
-  } catch (err) {
-    console.warn("Notice initializing central store:", err);
-  }
-
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -1171,6 +1389,11 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`EcoSort Server running on http://localhost:${PORT}`);
+  });
+
+  // Initialize multi-device store and sync with Supabase in background
+  initStore().catch((err) => {
+    console.warn("Notice initializing central store:", err);
   });
 }
 

@@ -26,6 +26,8 @@ import {
   WasteCategory,
   DuplicateAlertInfo,
   ScannedFingerprintRecord,
+  PreparationStep,
+  PreparationStepStatus,
 } from '../types';
 import { playScanSound, playPointSound, playWarningSound, playClickSound } from '../utils/audio';
 import {
@@ -39,6 +41,7 @@ import {
   FingerprintResult,
 } from '../utils/imageFingerprint';
 import { AntiCheatAuditModal } from './AntiCheatAuditModal';
+import { PreparationChecklistModal } from './PreparationChecklistModal';
 
 interface WebcamScannerProps {
   onClassified: (result: WasteClassificationResult) => void;
@@ -82,6 +85,9 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
   const [lastDemoItemId, setLastDemoItemId] = useState<string | null>(null);
   const [lastDemoScanTime, setLastDemoScanTime] = useState<number>(0);
   const [waitingForBinDeposit, setWaitingForBinDeposit] = useState(false);
+  const [activePreparationItem, setActivePreparationItem] = useState<WasteClassificationResult | null>(null);
+  const [activePreparationSteps, setActivePreparationSteps] = useState<PreparationStep[]>([]);
+  const [isChecklistOpen, setIsChecklistOpen] = useState(false);
   const [lastSimilarity, setLastSimilarity] = useState<number>(0);
   const [duplicateBlockedCount, setDuplicateBlockedCount] = useState(0);
 
@@ -173,25 +179,73 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
     setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'));
   };
 
-  // Capture frame from video to base64
+  // Capture frame from video to base64 (optimized resolution for fast Gemini vision)
   const captureFrame = (): string | null => {
     if (!videoRef.current || !canvasRef.current) return null;
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (video.videoWidth === 0 || video.videoHeight === 0) return null;
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    // Rescale to max 960px to drastically speed up network transfer & Gemini inference
+    let w = video.videoWidth;
+    let h = video.videoHeight;
+    const maxDim = 960;
+    if (w > maxDim || h > maxDim) {
+      if (w > h) {
+        h = Math.round((h * maxDim) / w);
+        w = maxDim;
+      } else {
+        w = Math.round((w * maxDim) / h);
+        h = maxDim;
+      }
+    }
+
+    canvas.width = w;
+    canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/jpeg', 0.85);
+    ctx.drawImage(video, 0, 0, w, h);
+    return canvas.toDataURL('image/jpeg', 0.82);
   };
 
-  // Confirm that waste has been dropped into bin (clears duplicate lock)
+  // Update preparation checklist step status
+  const handleUpdateStepStatus = (stepId: string, newStatus: PreparationStepStatus) => {
+    setActivePreparationSteps((prev) =>
+      prev.map((s) => (s.id === stepId ? { ...s, status: newStatus } : s))
+    );
+  };
+
+  // Complete preparation steps and award points
+  const handleConfirmCompletePreparation = () => {
+    if (!activePreparationItem) return;
+    const finalResult: WasteClassificationResult = {
+      ...activePreparationItem,
+      preparationSteps: activePreparationSteps,
+    };
+    setIsChecklistOpen(false);
+    if (antiCheatEnabled) {
+      setWaitingForBinDeposit(true);
+    }
+    setPreviousItemName(finalResult.itemName);
+    playPointSound(finalResult.points);
+    onClassified(finalResult);
+    setScanStatusText(`ĐÃ HOÀN TẤT & BỎ THÙNG: ${finalResult.itemName.toUpperCase()} (+${finalResult.points} Đ)`);
+  };
+
+  // Cancel preparation process
+  const handleCancelPreparation = () => {
+    setIsChecklistOpen(false);
+    setActivePreparationItem(null);
+    setActivePreparationSteps([]);
+    setScanStatusText('ĐÃ HỦY: SẴN SÀNG QUÉT MẪU MỚI');
+  };
+
+  // Confirm that waste has been prepared and dropped into bin (clears duplicate lock)
   const handleConfirmBinDrop = () => {
     setWaitingForBinDeposit(false);
+    setActivePreparationItem(null);
+    setActivePreparationSteps([]);
     setPreviousFingerprint(null);
     setLastDemoItemId(null);
     setLastSimilarity(0);
@@ -304,8 +358,43 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
         return;
       }
 
-      // 2. Reject non-waste images (selfie, face, pet, clean room, etc.)
-      if (result.isNotWaste || result.data?.isWaste === false || result.data?.points === 0) {
+      // 2. Check if AI is uncertain about the object or category
+      if (result.isUncertain || result.data?.isUncertain) {
+        playWarningSound();
+        const fallbackItemName = result.data?.itemName || 'Vật thể chưa xác định';
+        const rawCategory = result.data?.category;
+        const validCategory = ['organic', 'recyclable', 'inorganic'].includes(rawCategory)
+          ? rawCategory
+          : 'inorganic';
+
+        const uncertainResult: WasteClassificationResult = {
+          category: validCategory as any,
+          itemName: fallbackItemName,
+          points: 0, // CRITICAL: NEVER award points for uncertain cases
+          confidence: typeof result.data?.confidence === 'number' ? result.data.confidence : 0.45,
+          description:
+            result.data?.description ||
+            'AI chưa chắc chắn về vật thể này. Vui lòng chụp lại ở nơi đủ ánh sáng hoặc chọn báo cáo AI nhận nhầm.',
+          binColor: 'orange',
+          recyclingTip:
+            result.data?.recyclingTip ||
+            'Vui lòng chụp lại ở nơi đủ ánh sáng hoặc chọn báo cáo AI nhận nhầm.',
+          rawImage: base64Image,
+          source: scanSource,
+          isUncertain: true,
+          uncertaintyReason:
+            result.data?.uncertaintyReason ||
+            'AI chưa chắc chắn về vật thể này. Vui lòng chụp lại ở nơi đủ ánh sáng hoặc chọn báo cáo AI nhận nhầm.',
+        };
+
+        setScanErrorMessage(null);
+        setScanStatusText('⚠️ AI CHƯA CHẮC CHẮN (+0 ĐIỂM)');
+        onClassified(uncertainResult);
+        return;
+      }
+
+      // 3. Reject non-waste images (selfie, face, pet, clean room, etc.)
+      if (result.isNotWaste || result.data?.isWaste === false || (result.data?.points === 0 && !result.data?.isUncertain)) {
         playWarningSound();
         const msg =
           result.error ||
@@ -344,14 +433,50 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
           setFingerprintRegistry(loadFingerprintRegistry());
           setPreviousFingerprint(currentFingerprint);
         }
-        setPreviousItemName(classified.itemName);
-        if (antiCheatEnabled) {
-          setWaitingForBinDeposit(true);
+        let steps: PreparationStep[] = (classified.preparationSteps || []).map((s: any, idx: number) => ({
+          id: s.id || `step-${idx + 1}`,
+          instruction: s.instruction,
+          reason: s.reason,
+          isSafetyWarning: s.isSafetyWarning,
+          status: 'pending' as const,
+        }));
+
+        // Fallback default step if none provided
+        if (steps.length === 0) {
+          if (classified.category === 'organic') {
+            steps = [
+              {
+                id: 'step-1',
+                instruction: 'Bỏ trực tiếp vào thùng rác hữu cơ xanh lá',
+                reason: 'Ủ thành phân compost vi sinh cho cây trồng',
+                status: 'pending',
+              },
+            ];
+          } else if (classified.category === 'recyclable') {
+            steps = [
+              {
+                id: 'step-1',
+                instruction: 'Kiểm tra làm sạch sơ và bỏ vào thùng tái chế vàng',
+                reason: 'Bảo tồn chất lượng nguyên liệu tái sinh',
+                status: 'pending',
+              },
+            ];
+          } else {
+            steps = [
+              {
+                id: 'step-1',
+                instruction: 'Kiểm tra và bỏ vào thùng rác vô cơ cam',
+                reason: 'Thu gom tập trung xử lý an toàn',
+                status: 'pending',
+              },
+            ];
+          }
         }
 
-        playPointSound(classified.points);
-        onClassified(classified);
-        setScanStatusText(`ĐÃ NHẬN DIỆN: ${classified.itemName.toUpperCase()} (+${classified.points} Đ)`);
+        setActivePreparationItem(classified);
+        setActivePreparationSteps(steps);
+        setIsChecklistOpen(true);
+        setScanStatusText(`ĐÃ NHẬN DIỆN: ${classified.itemName.toUpperCase()} • CHỜ THỰC HIỆN CÁC BƯỚC`);
       } else {
         playWarningSound();
         const msg = result.error || 'Dữ liệu phân loại không hợp lệ hoặc không xác định được loại rác. Không cộng điểm.';
@@ -384,7 +509,7 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
     }
   };
 
-  // Handle uploaded image file
+  // Handle uploaded image file with automatic scaling to ensure fast Gemini processing
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -392,15 +517,40 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
     const reader = new FileReader();
     reader.onload = (event) => {
       const base64 = event.target?.result as string;
-      if (base64) {
-        handleProcessImage(base64, undefined, 'file_upload');
-      }
+      if (!base64) return;
+
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width;
+        let h = img.height;
+        const maxDim = 1200;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = w;
+        tempCanvas.height = h;
+        const ctx = tempCanvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, w, h);
+          handleProcessImage(tempCanvas.toDataURL('image/jpeg', 0.85), undefined, 'file_upload');
+        } else {
+          handleProcessImage(base64, undefined, 'file_upload');
+        }
+      };
+      img.src = base64;
     };
     reader.readAsDataURL(file);
     e.target.value = '';
   };
 
-  // Spacebar hotkey listener for live presentations
+  // Spacebar hotkey listener for live presentations and rescan event listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && e.target === document.body) {
@@ -408,8 +558,22 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
         handleCaptureLive();
       }
     };
+    const handleRescanEvent = () => {
+      if (!cameraActive) {
+        startCamera().then(() => {
+          setTimeout(() => handleCaptureLive(), 400);
+        });
+      } else {
+        handleCaptureLive();
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('ecosort:rescan', handleRescanEvent);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('ecosort:rescan', handleRescanEvent);
+    };
   });
 
   return (
@@ -869,6 +1033,15 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
           }
           setScanStatusText(`🚫 GIAN LẬN: QUÉT LẶP ${record.itemName.toUpperCase()} (+0 ĐIỂM)`);
         }}
+      />
+      {/* Preparation Steps Checklist Modal */}
+      <PreparationChecklistModal
+        isOpen={isChecklistOpen}
+        item={activePreparationItem}
+        steps={activePreparationSteps}
+        onUpdateStepStatus={handleUpdateStepStatus}
+        onConfirmComplete={handleConfirmCompletePreparation}
+        onCancel={handleCancelPreparation}
       />
     </div>
   );
