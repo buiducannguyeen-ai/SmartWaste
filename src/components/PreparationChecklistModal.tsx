@@ -9,6 +9,8 @@ import {
   RotateCcw,
   Sparkles,
   Info,
+  RefreshCw,
+  Award,
 } from 'lucide-react';
 import { WasteClassificationResult, PreparationStep, PreparationStepStatus } from '../types';
 import { playClickSound } from '../utils/audio';
@@ -18,8 +20,12 @@ interface PreparationChecklistModalProps {
   item: WasteClassificationResult | null;
   steps: PreparationStep[];
   onUpdateStepStatus: (stepId: string, status: PreparationStepStatus) => void;
-  onConfirmComplete: () => void;
+  onConfirmComplete: () => Promise<void> | void;
   onCancel: () => void;
+  isSubmitting?: boolean;
+  errorMessage?: string | null;
+  successMessage?: string | null;
+  onRetry?: () => void;
 }
 
 export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps> = ({
@@ -29,6 +35,10 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
   onUpdateStepStatus,
   onConfirmComplete,
   onCancel,
+  isSubmitting = false,
+  errorMessage = null,
+  successMessage = null,
+  onRetry,
 }) => {
   if (!isOpen || !item) return null;
 
@@ -40,6 +50,10 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
   const completedCount = steps.filter((s) => s.status === 'completed').length;
   const notApplicableCount = steps.filter((s) => s.status === 'not_applicable').length;
 
+  // Strict STEM Points calculation: Hữu cơ = 1, Tái chế = 2, Vô cơ = 3
+  const pointsToAward =
+    item.category === 'organic' ? 1 : item.category === 'recyclable' ? 2 : 3;
+
   const getCategoryDetails = () => {
     switch (item.category) {
       case 'organic':
@@ -48,7 +62,7 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
           colorBadge: 'bg-emerald-950/80 border-emerald-500 text-emerald-300',
           binBadge: 'bg-emerald-600 text-white',
           binText: 'Thùng Xanh Lá (Ủ phân vi sinh)',
-          pointsText: '+1 Điểm STEM',
+          pointsText: `+${pointsToAward} Điểm STEM`,
           borderColor: 'border-emerald-500/80',
           gradientBg: 'from-emerald-950/90 via-slate-900 to-slate-950',
         };
@@ -58,7 +72,7 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
           colorBadge: 'bg-amber-950/80 border-amber-500 text-amber-300',
           binBadge: 'bg-amber-500 text-slate-950',
           binText: 'Thùng Vàng / Trắng (Tái sinh nguyên liệu)',
-          pointsText: '+2 Điểm STEM',
+          pointsText: `+${pointsToAward} Điểm STEM`,
           borderColor: 'border-amber-500/80',
           gradientBg: 'from-amber-950/90 via-slate-900 to-slate-950',
         };
@@ -69,7 +83,7 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
           colorBadge: 'bg-orange-950/80 border-orange-500 text-orange-300',
           binBadge: 'bg-orange-600 text-white',
           binText: 'Thùng Cam / Xám (Rác còn lại khó phân hủy)',
-          pointsText: '+3 Điểm STEM',
+          pointsText: `+${pointsToAward} Điểm STEM`,
           borderColor: 'border-orange-500/80',
           gradientBg: 'from-orange-950/90 via-slate-900 to-slate-950',
         };
@@ -86,6 +100,55 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
       <div
         className={`w-full max-w-lg bg-gradient-to-b ${cat.gradientBg} border-2 ${cat.borderColor} rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200`}
       >
+        {/* Top 3-State Progress Pipeline */}
+        <div className="px-4 py-2.5 bg-slate-950/90 border-b border-slate-800 text-[11px] font-mono flex items-center justify-between gap-2">
+          {/* State 1: AI đã nhận diện */}
+          <div className="flex items-center gap-1.5 text-emerald-400 font-bold">
+            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="truncate">1. AI ĐÃ NHẬN DIỆN</span>
+          </div>
+
+          <ArrowRight className="w-3 h-3 text-slate-600 flex-shrink-0" />
+
+          {/* State 2: Xác nhận hành động */}
+          <div
+            className={`flex items-center gap-1.5 font-bold truncate ${
+              allConfirmed ? 'text-emerald-400' : 'text-amber-300 animate-pulse'
+            }`}
+          >
+            {allConfirmed ? (
+              <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+            ) : (
+              <Clock className="w-3.5 h-3.5 flex-shrink-0" />
+            )}
+            <span className="truncate">2. HỌC SINH XÁC NHẬN</span>
+          </div>
+
+          <ArrowRight className="w-3 h-3 text-slate-600 flex-shrink-0" />
+
+          {/* State 3: Máy chủ ghi nhận điểm */}
+          <div
+            className={`flex items-center gap-1.5 font-bold truncate ${
+              successMessage
+                ? 'text-emerald-400'
+                : isSubmitting
+                ? 'text-cyan-300 animate-spin'
+                : 'text-slate-500'
+            }`}
+          >
+            {successMessage ? (
+              <Award className="w-3.5 h-3.5 flex-shrink-0" />
+            ) : isSubmitting ? (
+              <RefreshCw className="w-3.5 h-3.5 flex-shrink-0" />
+            ) : (
+              <span className="w-3.5 h-3.5 rounded-full border border-slate-600 inline-block flex-shrink-0 text-center leading-3 text-[9px]">
+                3
+              </span>
+            )}
+            <span className="truncate">3. GHI NHẬN ĐIỂM</span>
+          </div>
+        </div>
+
         {/* Header Bar */}
         <div className="p-4 sm:p-5 border-b border-slate-800 bg-slate-950/70">
           <div className="flex items-center justify-between gap-3 mb-2">
@@ -117,6 +180,9 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
                 <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-slate-800 text-emerald-400 font-mono border border-slate-700">
                   {cat.pointsText}
                 </span>
+                <span className="text-[10px] text-amber-300/90 font-medium bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-500/40">
+                  Chưa cộng điểm (Chờ hoàn tất xử lý)
+                </span>
               </div>
             </div>
           </div>
@@ -132,7 +198,7 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
             <ArrowRight className="w-4 h-4 text-slate-400 flex-shrink-0" />
           </div>
 
-          {/* Safety Special Notice if hazardous (e.g., batteries, sharp fragments) */}
+          {/* Safety Special Notice if hazardous */}
           {(item.isHazardousOrSpecial || item.specialHandlingNotice) && (
             <div className="mt-2.5 p-3 rounded-xl bg-rose-950/80 border-2 border-rose-500/70 text-rose-200 flex items-start gap-2.5 text-xs shadow-md shadow-rose-950/40">
               <ShieldAlert className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
@@ -147,12 +213,93 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
               </div>
             </div>
           )}
+
+          {/* Local Regulation Notice if applicable */}
+          {item.localRuleNote && (
+            <div className="mt-2.5 p-2.5 rounded-xl bg-blue-950/80 border border-blue-500/60 text-blue-200 flex items-start gap-2.5 text-xs shadow-sm">
+              <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-blue-300 block">
+                  QUY ĐỊNH THU GOM ĐỊA PHƯƠNG
+                </span>
+                <p className="mt-0.5 text-[11px] text-blue-100/90 leading-relaxed">
+                  {item.localRuleNote}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* AI Uncertainty Notice if applicable */}
+          {item.isUncertain && item.uncertaintyReason && (
+            <div className="mt-2.5 p-2.5 rounded-xl bg-amber-950/80 border border-amber-500/60 text-amber-200 flex items-start gap-2.5 text-xs shadow-sm">
+              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-amber-300 block">
+                  AI CẦN THÊM THÔNG TIN ĐỂ CHÍNH XÁC HƠN
+                </span>
+                <p className="mt-0.5 text-[11px] text-amber-100/90 leading-relaxed">
+                  {item.uncertaintyReason}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Scrollable Checklist Body */}
         <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1">
+          {/* Celebratory Success Banner if server recording completed */}
+          {successMessage && (
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/90 via-teal-950/90 to-emerald-900/90 border-2 border-emerald-400 text-center shadow-xl shadow-emerald-950/50 animate-in zoom-in-95 duration-200">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-400/50 flex items-center justify-center text-emerald-400 mx-auto mb-2">
+                <CheckCircle2 className="w-7 h-7" />
+              </div>
+              <h3 className="text-base font-black text-emerald-200 uppercase tracking-tight">
+                Xử Lý Và Phân Loại Rác Thành Công!
+              </h3>
+              <p className="text-xs text-slate-200 mt-1 leading-relaxed font-semibold">
+                {successMessage}
+              </p>
+              <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/30 text-emerald-300 text-xs font-mono font-black border border-emerald-400/40">
+                <span>+{pointsToAward} ĐIỂM ĐÃ ĐƯỢC GHI NHẬN</span>
+              </div>
+            </div>
+          )}
+
+          {/* Error Notice Banner if point recording failed */}
+          {errorMessage && (
+            <div className="p-4 rounded-2xl bg-rose-950/90 border-2 border-rose-500 text-rose-200 space-y-2.5 animate-in fade-in duration-200 shadow-xl shadow-rose-950/40">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-xs font-black uppercase text-rose-200 tracking-wide">
+                    Lưu Điểm Thất Bại &bull; Chưa Cộng Điểm
+                  </h4>
+                  <p className="text-xs text-rose-100/90 mt-0.5 leading-relaxed">
+                    {errorMessage}. Để đảm bảo an toàn và chống phát sinh điểm giả, số điểm chưa được ghi nhận vào tài khoản. Bạn có thể bấm &ldquo;Thử lại&rdquo; để gửi lại yêu cầu an toàn.
+                  </p>
+                </div>
+              </div>
+              {onRetry && (
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playClickSound();
+                      onRetry();
+                    }}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSubmitting ? 'animate-spin' : ''}`} />
+                    <span>{isSubmitting ? 'Đang thử lại...' : 'Thử lại lưu điểm'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="text-xs text-slate-300 leading-relaxed font-medium">
-            Học sinh vui lòng thực hiện 1–2 bước xử lý cụ thể dưới đây và đánh dấu xác nhận trước khi bỏ rác vào thùng:
+            Học sinh xác nhận đã thực hiện các bước xử lý cụ thể dưới đây trước khi bỏ vào thùng rác:
           </div>
 
           <div className="space-y-3">
@@ -226,6 +373,7 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
                     {/* Status: Chưa thực hiện */}
                     <button
                       type="button"
+                      disabled={isSubmitting || Boolean(successMessage)}
                       onClick={() => {
                         playClickSound();
                         onUpdateStepStatus(step.id, 'pending');
@@ -234,7 +382,7 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
                         status === 'pending'
                           ? 'bg-amber-500/20 border-2 border-amber-400 text-amber-300 shadow-sm'
                           : 'bg-slate-950/60 border border-slate-800 text-slate-400 hover:text-slate-200'
-                      }`}
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
                     >
                       <Clock className="w-3.5 h-3.5" />
                       <span>Chưa thực hiện</span>
@@ -243,6 +391,7 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
                     {/* Status: Đã thực hiện */}
                     <button
                       type="button"
+                      disabled={isSubmitting || Boolean(successMessage)}
                       onClick={() => {
                         playClickSound();
                         onUpdateStepStatus(step.id, 'completed');
@@ -251,7 +400,7 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
                         status === 'completed'
                           ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 border-2 border-emerald-300 shadow-md shadow-emerald-500/30 scale-105'
                           : 'bg-slate-950/60 border border-slate-800 text-slate-300 hover:text-emerald-300 hover:border-emerald-500/50'
-                      }`}
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />
                       <span>Đã thực hiện</span>
@@ -260,6 +409,7 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
                     {/* Status: Không áp dụng */}
                     <button
                       type="button"
+                      disabled={isSubmitting || Boolean(successMessage)}
                       onClick={() => {
                         playClickSound();
                         onUpdateStepStatus(step.id, 'not_applicable');
@@ -268,7 +418,7 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
                         status === 'not_applicable'
                           ? 'bg-slate-700 border-2 border-slate-400 text-slate-100 shadow-sm'
                           : 'bg-slate-950/60 border border-slate-800 text-slate-400 hover:text-slate-200'
-                      }`}
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
                       title="Chọn nếu vật thể đã sạch/rỗng sẵn hoặc không cần thiết áp dụng bước này"
                     >
                       <MinusCircle className="w-3.5 h-3.5" />
@@ -295,8 +445,8 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
             )}
             <span>
               {allConfirmed
-                ? 'Tuyệt vời! Bạn đã xác nhận đầy đủ các bước chuẩn bị. Hãy bấm nút bên dưới để hoàn tất quy trình và tích điểm.'
-                : `Còn ${pendingCount} bước ở trạng thái "Chưa thực hiện". Bạn cần xác nhận Đã thực hiện hoặc Không áp dụng cho mọi bước để được mở khóa hoàn tất quy trình.`}
+                ? 'Tuyệt vời! Bạn đã xác nhận đầy đủ các bước. Hãy nhấn nút "Tôi đã xử lý và bỏ rác đúng cách" bên dưới để hệ thống ghi nhận điểm.'
+                : `Còn ${pendingCount} bước ở trạng thái "Chưa thực hiện". Bạn cần xác nhận "Đã thực hiện" hoặc "Không áp dụng" cho mọi bước để mở khóa nút xác nhận.`}
             </span>
           </div>
         </div>
@@ -306,32 +456,52 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
           <button
             type="button"
             id="btn-cancel-preparation"
+            disabled={isSubmitting}
             onClick={() => {
               playClickSound();
               onCancel();
             }}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs border border-slate-700 transition-all cursor-pointer active:scale-95"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs border border-slate-700 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
           >
             <RotateCcw className="w-4 h-4 text-slate-400" />
-            <span>Hủy / Quét lại</span>
+            <span>Hủy / Quét lại (+0 đ)</span>
           </button>
 
+          {/* Core confirmation button: Only active after student confirms steps */}
           <button
             type="button"
-            id="btn-complete-preparation"
-            disabled={!allConfirmed}
+            id="btn-confirm-processed-waste"
+            disabled={!allConfirmed || isSubmitting || Boolean(successMessage)}
             onClick={() => {
               playClickSound();
               onConfirmComplete();
             }}
             className={`flex items-center gap-2 px-6 py-3 rounded-xl font-black text-xs sm:text-sm tracking-wide transition-all shadow-xl cursor-pointer ${
-              allConfirmed
+              successMessage
+                ? 'bg-emerald-500 text-slate-950 cursor-default'
+                : isSubmitting
+                ? 'bg-cyan-600 text-white cursor-wait opacity-80'
+                : allConfirmed
                 ? 'bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 hover:from-emerald-300 hover:to-cyan-300 text-slate-950 shadow-emerald-500/40 ring-4 ring-emerald-400/30 hover:scale-105 active:scale-95 animate-pulse hover:animate-none'
                 : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed opacity-60'
             }`}
           >
-            <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span>HOÀN TẤT & BỎ VÀO THÙNG (+{item.points} Đ)</span>
+            {isSubmitting ? (
+              <>
+                <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+                <span>Đang ghi nhận điểm...</span>
+              </>
+            ) : successMessage ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                <span>Đã ghi nhận điểm (+{pointsToAward} Đ)</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                <span>Tôi đã xử lý và bỏ rác đúng cách (+{pointsToAward} Đ)</span>
+              </>
+            )}
           </button>
         </div>
       </div>

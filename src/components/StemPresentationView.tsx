@@ -11,6 +11,9 @@ interface StemPresentationViewProps {
   isProcessing: boolean;
   setIsProcessing: (val: boolean) => void;
   onClassified: (result: WasteClassificationResult) => void;
+  onConfirmAwardPoints?: (
+    result: WasteClassificationResult
+  ) => Promise<{ success: boolean; error?: string; alreadyProcessed?: boolean; pointsAwarded?: number }>;
   onResetLeaderboard: () => void;
   onAddNewUser: () => void;
   onExitFullscreen: () => void;
@@ -26,6 +29,7 @@ export const StemPresentationView: React.FC<StemPresentationViewProps> = ({
   isProcessing,
   setIsProcessing,
   onClassified,
+  onConfirmAwardPoints,
   onResetLeaderboard,
   onAddNewUser,
   onExitFullscreen,
@@ -96,6 +100,7 @@ export const StemPresentationView: React.FC<StemPresentationViewProps> = ({
         <div className="lg:col-span-7">
           <WebcamScanner
             onClassified={onClassified}
+            onConfirmAwardPoints={onConfirmAwardPoints}
             isProcessing={isProcessing}
             setIsProcessing={setIsProcessing}
             onDuplicateDetected={onDuplicateDetected}

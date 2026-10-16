@@ -17,8 +17,17 @@ export interface StoredPlayer {
   createdAt: number;
 }
 
+export interface StoredPreparationStep {
+  id: string;
+  instruction: string;
+  reason?: string;
+  isSafetyWarning?: boolean;
+  status?: 'pending' | 'completed' | 'not_applicable';
+}
+
 export interface StoredHistoryItem {
   id: string;
+  scanId?: string;
   userId: string;
   userName: string;
   itemName: string;
@@ -27,6 +36,8 @@ export interface StoredHistoryItem {
   confidence: number;
   source: string;
   timestamp: number;
+  preparationSteps?: StoredPreparationStep[];
+  specialHandlingNotice?: string;
 }
 
 export interface StoredWasteReport {
@@ -79,6 +90,7 @@ interface StoreData {
   history: StoredHistoryItem[];
   reports: StoredWasteReport[];
   misclassifications?: StoredMisclassificationFeedback[];
+  processedScanIds?: string[];
 }
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -117,7 +129,10 @@ let cachedData: StoreData = {
   history: [],
   reports: [],
   misclassifications: [],
+  processedScanIds: [],
 };
+
+const processedScanIdsSet = new Set<string>();
 
 const INITIAL_VERIFIED_REPORTS: StoredWasteReport[] = [];
 
@@ -149,7 +164,15 @@ function loadDataFromDisk(): boolean {
           history: Array.isArray(parsed.history) ? parsed.history : [],
           reports: Array.isArray(parsed.reports) ? parsed.reports : [],
           misclassifications: Array.isArray(parsed.misclassifications) ? parsed.misclassifications : [],
+          processedScanIds: Array.isArray(parsed.processedScanIds) ? parsed.processedScanIds : [],
         };
+        processedScanIdsSet.clear();
+        for (const id of cachedData.processedScanIds || []) {
+          processedScanIdsSet.add(id);
+        }
+        for (const h of cachedData.history) {
+          if (h.scanId) processedScanIdsSet.add(h.scanId);
+        }
         return true;
       }
     }
@@ -267,8 +290,10 @@ export async function resetAllPlayerPoints(): Promise<{
     player.lastActive = Date.now();
   }
 
-  // Clear classification history
+  // Clear classification history and processed scan IDs
   cachedData.history = [];
+  cachedData.processedScanIds = [];
+  processedScanIdsSet.clear();
 
   // Save to local JSON disk
   saveDataToDisk();
@@ -308,6 +333,7 @@ export async function resetAllPlayerPoints(): Promise<{
 }
 
 export function recordClassification(params: {
+  scanId?: string;
   userId?: string;
   userName: string;
   email?: string;
@@ -318,13 +344,13 @@ export function recordClassification(params: {
   points: number;
   confidence?: number;
   source?: string;
-}): { player: StoredPlayer; leaderboard: (StoredPlayer & { levelTitle: string })[] } {
-  // Ensure valid points (Hữu cơ: 1, Tái chế: 2, Vô cơ: 3)
-  let pts = params.points;
-  if (params.category === 'organic') pts = 1;
-  else if (params.category === 'recyclable') pts = 2;
-  else if (params.category === 'inorganic') pts = 3;
-
+  preparationSteps?: StoredPreparationStep[];
+  specialHandlingNotice?: string;
+}): {
+  player: StoredPlayer;
+  leaderboard: (StoredPlayer & { levelTitle: string })[];
+  alreadyProcessed?: boolean;
+} {
   const player = upsertPlayer({
     id: params.userId,
     name: params.userName,
@@ -332,6 +358,33 @@ export function recordClassification(params: {
     organization: params.organization,
     avatar: params.avatar,
   });
+
+  // IDEMPOTENCY CHECK: If scanId was already credited, never award duplicate points
+  if (params.scanId && processedScanIdsSet.has(params.scanId)) {
+    console.log(`[EcoSort Store] scanId ${params.scanId} already processed. Returning without awarding duplicate points.`);
+    return {
+      player,
+      leaderboard: getLeaderboard(),
+      alreadyProcessed: true,
+    };
+  }
+
+  // Ensure valid points (Hữu cơ: 1, Tái chế: 2, Vô cơ: 3)
+  let pts = params.points;
+  if (params.category === 'organic') pts = 1;
+  else if (params.category === 'recyclable') pts = 2;
+  else if (params.category === 'inorganic') pts = 3;
+
+  if (params.scanId) {
+    processedScanIdsSet.add(params.scanId);
+    if (!cachedData.processedScanIds) {
+      cachedData.processedScanIds = [];
+    }
+    cachedData.processedScanIds.push(params.scanId);
+    if (cachedData.processedScanIds.length > 2000) {
+      cachedData.processedScanIds = cachedData.processedScanIds.slice(-2000);
+    }
+  }
 
   player.totalPoints += pts;
   player.correctCount += 1;
@@ -342,6 +395,7 @@ export function recordClassification(params: {
 
   const historyItem: StoredHistoryItem = {
     id: 'log-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    scanId: params.scanId,
     userId: player.id,
     userName: player.name,
     itemName: params.itemName,
@@ -350,6 +404,8 @@ export function recordClassification(params: {
     confidence: params.confidence || 0.95,
     source: params.source || 'webcam',
     timestamp: Date.now(),
+    preparationSteps: params.preparationSteps,
+    specialHandlingNotice: params.specialHandlingNotice,
   };
 
   cachedData.history.unshift(historyItem);
@@ -369,6 +425,7 @@ export function recordClassification(params: {
   return {
     player,
     leaderboard: getLeaderboard(),
+    alreadyProcessed: false,
   };
 }
 

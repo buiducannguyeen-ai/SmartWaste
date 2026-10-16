@@ -192,7 +192,7 @@ export const PointsNotification: React.FC<PointsNotificationProps> = ({
                 } shadow-inner`}
               >
                 <span className="text-[10px] uppercase font-bold text-slate-400">
-                  {isUncertain ? 'TẠM KHÓA' : 'TÍCH LUỸ'}
+                  {isUncertain ? 'TẠM KHÓA' : 'ĐÃ CỘNG'}
                 </span>
                 <span
                   className={`text-2xl sm:text-3xl font-black ${theme.pointColor} tracking-tighter leading-none my-0.5`}
@@ -230,6 +230,11 @@ export const PointsNotification: React.FC<PointsNotificationProps> = ({
                   </div>
                 ) : (
                   <>
+                    <div className="mb-2 p-2 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-bold flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      <span>Chúc mừng bạn đã xử lý và bỏ rác đúng cách! (+{result.points} điểm)</span>
+                    </div>
+
                     <p className="text-xs text-slate-300 leading-relaxed line-clamp-2 mb-2">
                       {result.description}
                     </p>

@@ -213,3 +213,35 @@ export function clearHistory() {
     localStorage.removeItem(STORAGE_KEYS.HISTORY);
   } catch (e) {}
 }
+
+const PROCESSED_SCANS_KEY = 'ecosort_processed_scan_ids';
+
+export function loadProcessedScanIds(): string[] {
+  try {
+    const raw = localStorage.getItem(PROCESSED_SCANS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveProcessedScanId(scanId: string): void {
+  if (!scanId) return;
+  try {
+    const existing = loadProcessedScanIds();
+    if (!existing.includes(scanId)) {
+      const updated = [scanId, ...existing].slice(0, 500); // keep last 500 scans
+      localStorage.setItem(PROCESSED_SCANS_KEY, JSON.stringify(updated));
+    }
+  } catch (e) {
+    console.warn('Failed to save processed scan ID:', e);
+  }
+}
+
+export function isScanIdProcessedLocally(scanId: string): boolean {
+  if (!scanId) return false;
+  const list = loadProcessedScanIds();
+  return list.includes(scanId);
+}

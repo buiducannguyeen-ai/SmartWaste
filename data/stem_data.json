@@ -416,5 +416,8 @@
       "userSuggestedCategory": "recyclable",
       "userNote": "Hộp sữa có thể bóc tách để tái chế bột giấy"
     }
+  ],
+  "processedScanIds": [
+    "test-scan-001"
   ]
 }

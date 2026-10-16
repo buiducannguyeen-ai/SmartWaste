@@ -16,6 +16,8 @@ import {
   loadLeaderboard,
   saveLeaderboard,
   getLevelTitle,
+  isScanIdProcessedLocally,
+  saveProcessedScanId,
 } from './utils/storage';
 import { getIsMuted, toggleMute, playVictorySound, playPointSound } from './utils/audio';
 
@@ -314,9 +316,29 @@ export default function App() {
     };
   }, [refreshLeaderboardOnline]);
 
-  // Handle classification result from WebcamScanner
-  const handleClassified = useCallback(
-    async (result: WasteClassificationResult) => {
+  // Notification / Preview handler (called on AI classification without awarding points)
+  const handleClassified = useCallback((result: WasteClassificationResult) => {
+    if (!result) return;
+    // Show uncertain alert if applicable
+    if (result.isUncertain) {
+      setActiveNotification({
+        ...result,
+        points: 0,
+        flowState: 'ai_recognized',
+      });
+    }
+  }, []);
+
+  // Award Points Handler - strictly invoked ONLY after student confirms "Tôi đã xử lý và bỏ rác đúng cách"
+  const handleAwardPoints = useCallback(
+    async (
+      result: WasteClassificationResult
+    ): Promise<{
+      success: boolean;
+      error?: string;
+      alreadyProcessed?: boolean;
+      pointsAwarded?: number;
+    }> => {
       // 0. Strict validation: Never award points if classification failed or object is not waste
       if (
         !result ||
@@ -325,50 +347,42 @@ export default function App() {
         (result as any).isScreenOrPhotoSpoof ||
         !['organic', 'recyclable', 'inorganic'].includes(result.category)
       ) {
-        return;
+        return { success: false, error: 'Vật thể không phải là rác thải hợp lệ để cộng điểm' };
       }
 
-      // Handle uncertain AI classifications: show notice with 0 points, NEVER award points
+      // Handle uncertain AI classifications: NEVER award points
       if (result.isUncertain) {
-        setActiveNotification({
-          ...result,
-          points: 0,
-        });
-        return;
+        return {
+          success: false,
+          error: 'AI chưa chắc chắn về vật thể này. Quy chế STEM không cho phép cộng điểm.',
+        };
       }
 
-      // 1. Verification: Award points for both live camera scanning and file uploads (unless reference only)
-      const isValidScan = (result.source === 'webcam' || result.source === 'file_upload' || !result.source) && !result.isReferenceOnly;
+      const scanId =
+        result.scanId ||
+        'scan-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
 
-      // Calculate points strictly according to STEM specification:
-      // Hữu cơ -> +1, Tái chế -> +2, Vô cơ -> +3
+      // FRONTEND IDEMPOTENCY CHECK: Ensure each valid scan is credited at most once
+      if (isScanIdProcessedLocally(scanId)) {
+        return {
+          success: true,
+          alreadyProcessed: true,
+          pointsAwarded: result.points,
+        };
+      }
+
+      // 1. Strict point scoring rules:
+      // Rác hữu cơ: 1 điểm | Rác tái chế: 2 điểm | Rác vô cơ: 3 điểm
       let pointsToAward = 0;
-      if (isValidScan) {
-        if (result.category === 'organic') pointsToAward = 1;
-        else if (result.category === 'recyclable') pointsToAward = 2;
-        else if (result.category === 'inorganic') pointsToAward = 3;
-        else pointsToAward = result.points || 0;
+      if (result.category === 'organic') pointsToAward = 1;
+      else if (result.category === 'recyclable') pointsToAward = 2;
+      else if (result.category === 'inorganic') pointsToAward = 3;
+
+      if (pointsToAward <= 0) {
+        return { success: false, error: 'Số điểm phân loại không hợp lệ' };
       }
 
-      // Display floating notification
-      const displayResult: WasteClassificationResult = {
-        ...result,
-        points: pointsToAward,
-      };
-      setActiveNotification(displayResult);
-
-      if (pointsToAward > 0) {
-        setRecentPointChange(pointsToAward);
-        playPointSound(pointsToAward);
-        setTimeout(() => setRecentPointChange(null), 3000);
-      }
-
-      if (!isValidScan || pointsToAward <= 0) {
-        return;
-      }
-
-      // 2. IMMEDIATE OPTIMISTIC LOCAL STATE UPDATE (Ensures points NEVER fail to register)
-      let activeUser = currentUser;
+      let activeUser = currentUserRef.current || currentUser;
       if (!activeUser) {
         activeUser = {
           id: 'user-' + Date.now(),
@@ -384,146 +398,157 @@ export default function App() {
         };
       }
 
-      const wasPoints = activeUser.totalPoints;
-      const newPoints = wasPoints + pointsToAward;
-      const newCount = (activeUser.correctCount || 0) + 1;
-
-      const updatedUser: UserProfile = {
-        ...activeUser,
-        totalPoints: newPoints,
-        correctCount: newCount,
-        organicCount: (activeUser.organicCount || 0) + (result.category === 'organic' ? 1 : 0),
-        recyclableCount: (activeUser.recyclableCount || 0) + (result.category === 'recyclable' ? 1 : 0),
-        inorganicCount: (activeUser.inorganicCount || 0) + (result.category === 'inorganic' ? 1 : 0),
-      };
-
-      // Update current user in memory and localStorage
-      setCurrentUser(updatedUser);
-      saveUserProfile(updatedUser);
-
-      if (newPoints >= 20 && wasPoints < 20) {
-        playVictorySound();
-      }
-
-      // Record to local classification history
-      const newRecord: WasteHistoryRecord = {
-        ...result,
-        points: pointsToAward,
-        id: 'record-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-        timestamp: Date.now(),
-        userName: updatedUser.name,
-      };
-      setHistory((prev) => {
-        const next = [newRecord, ...prev];
-        saveHistory(next);
-        return next;
-      });
-
-      // Update Leaderboard immediately on screen so ranking changes in real-time
-      setLeaderboardEntries((prev) => {
-        let list = [...prev];
-        const existingIdx = list.findIndex(
-          (e) => e.id === updatedUser.id || e.name.trim().toLowerCase() === updatedUser.name.trim().toLowerCase()
-        );
-        const newEntry: LeaderboardEntry = {
-          id: updatedUser.id,
-          name: updatedUser.name,
-          email: updatedUser.email,
-          organization: updatedUser.organization || 'Khối Sáng Tạo STEM',
-          totalPoints: updatedUser.totalPoints,
-          correctCount: updatedUser.correctCount || 0,
-          avatar: updatedUser.avatar || '🌱',
-          levelTitle: getLevelTitle(updatedUser.totalPoints),
-          lastActive: Date.now(),
-          isCurrentUser: true,
-        };
-
-        if (existingIdx >= 0) {
-          list[existingIdx] = newEntry;
-        } else {
-          list.push(newEntry);
-        }
-
-        list.sort((a, b) => {
-          if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
-          if ((b.correctCount || 0) !== (a.correctCount || 0)) return (b.correctCount || 0) - (a.correctCount || 0);
-          return b.lastActive - a.lastActive;
-        });
-
-        saveLeaderboard(list);
-        return list;
-      });
-
-      // 3. CENTRAL AUTHORITATIVE RECORDING (Single pipeline: server updates, persists to Supabase, broadcasts SSE)
+      // 2. CENTRAL AUTHORITATIVE RECORDING (Must succeed before user score is updated)
       try {
         const serverRes = await recordPointsOnServer({
-          userId: updatedUser.id,
-          userName: updatedUser.name,
-          email: updatedUser.email,
-          organization: updatedUser.organization,
-          avatar: updatedUser.avatar,
+          scanId,
+          userId: activeUser.id,
+          userName: activeUser.name,
+          email: activeUser.email,
+          organization: activeUser.organization,
+          avatar: activeUser.avatar,
           itemName: result.itemName,
           category: result.category,
           points: pointsToAward,
           confidence: result.confidence,
           source: result.source || 'webcam',
+          preparationSteps: result.preparationSteps,
+          specialHandlingNotice: result.specialHandlingNotice,
         });
 
-        if (serverRes.success && serverRes.leaderboard) {
+        if (!serverRes.success) {
+          // SAFE ERROR HANDLING: Do NOT fabricate fake points in user profile
+          return {
+            success: false,
+            error: serverRes.error || 'Máy chủ không phản hồi lưu điểm',
+          };
+        }
+
+        // Mark scanId as processed locally
+        saveProcessedScanId(scanId);
+
+        if (serverRes.alreadyProcessed) {
+          return {
+            success: true,
+            alreadyProcessed: true,
+            pointsAwarded: pointsToAward,
+          };
+        }
+
+        const wasPoints = activeUser.totalPoints || 0;
+        const newPoints =
+          serverRes.totalPoints !== undefined ? serverRes.totalPoints : wasPoints + pointsToAward;
+        const newCount =
+          serverRes.correctCount !== undefined
+            ? serverRes.correctCount
+            : (activeUser.correctCount || 0) + 1;
+
+        const updatedUser: UserProfile = {
+          ...activeUser,
+          totalPoints: newPoints,
+          correctCount: newCount,
+          organicCount: (activeUser.organicCount || 0) + (result.category === 'organic' ? 1 : 0),
+          recyclableCount: (activeUser.recyclableCount || 0) + (result.category === 'recyclable' ? 1 : 0),
+          inorganicCount: (activeUser.inorganicCount || 0) + (result.category === 'inorganic' ? 1 : 0),
+        };
+
+        currentUserRef.current = updatedUser;
+        setCurrentUser(updatedUser);
+        saveUserProfile(updatedUser);
+
+        // Sound & HUD notification
+        playPointSound(pointsToAward);
+        setRecentPointChange(pointsToAward);
+        setTimeout(() => setRecentPointChange(null), 3500);
+
+        if (newPoints >= 20 && wasPoints < 20) {
+          playVictorySound();
+        }
+
+        // Record to classification history
+        const newRecord: WasteHistoryRecord = {
+          ...result,
+          scanId,
+          points: pointsToAward,
+          flowState: 'server_recorded',
+          id: 'record-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+          timestamp: Date.now(),
+          userName: updatedUser.name,
+        };
+        setHistory((prev) => {
+          const next = [newRecord, ...prev];
+          saveHistory(next);
+          return next;
+        });
+
+        // Update Leaderboard
+        if (serverRes.leaderboard && Array.isArray(serverRes.leaderboard)) {
           const list = serverRes.leaderboard.map((e) => ({
             ...e,
             isCurrentUser: e.id === updatedUser.id,
           }));
           setLeaderboardEntries(list);
           saveLeaderboard(list);
-
-          const myEntry = list.find((e) => e.id === updatedUser.id);
-          if (myEntry) {
-            const confirmedUser: UserProfile = {
-              ...updatedUser,
-              totalPoints: myEntry.totalPoints,
-              correctCount: myEntry.correctCount ?? updatedUser.correctCount,
+        } else {
+          setLeaderboardEntries((prev) => {
+            let list = [...prev];
+            const existingIdx = list.findIndex(
+              (e) =>
+                e.id === updatedUser.id ||
+                e.name.trim().toLowerCase() === updatedUser.name.trim().toLowerCase()
+            );
+            const newEntry: LeaderboardEntry = {
+              id: updatedUser.id,
+              name: updatedUser.name,
+              email: updatedUser.email,
+              organization: updatedUser.organization || 'Khối Sáng Tạo STEM',
+              totalPoints: updatedUser.totalPoints,
+              correctCount: updatedUser.correctCount || 0,
+              avatar: updatedUser.avatar || '🌱',
+              levelTitle: getLevelTitle(updatedUser.totalPoints),
+              lastActive: Date.now(),
+              isCurrentUser: true,
             };
-            currentUserRef.current = confirmedUser;
-            setCurrentUser(confirmedUser);
-            saveUserProfile(confirmedUser);
-          }
-        }
-      } catch (e) {
-        console.warn('Central server sync error, attempting direct client Supabase fallback:', e);
-        // Fallback only if the central server is completely unreachable
-        if (isSupabaseLive || isSupabaseConfigured()) {
-          try {
-            const onlineRes = await recordClassificationOnline({
-              itemName: result.itemName,
-              category: result.category,
-              points: pointsToAward,
-              source: result.source || 'webcam',
-              confidence: result.confidence,
-              userId: updatedUser.id,
-              userName: updatedUser.name,
-              organization: updatedUser.organization,
-              avatar: updatedUser.avatar,
+
+            if (existingIdx >= 0) {
+              list[existingIdx] = newEntry;
+            } else {
+              list.push(newEntry);
+            }
+
+            list.sort((a, b) => {
+              if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+              if ((b.correctCount || 0) !== (a.correctCount || 0))
+                return (b.correctCount || 0) - (a.correctCount || 0);
+              return b.lastActive - a.lastActive;
             });
 
-            if (onlineRes.success && onlineRes.totalPoints !== undefined) {
-              const confirmedUser: UserProfile = {
-                ...updatedUser,
-                totalPoints: onlineRes.totalPoints,
-                correctCount: onlineRes.correctCount ?? updatedUser.correctCount,
-              };
-              currentUserRef.current = confirmedUser;
-              setCurrentUser(confirmedUser);
-              saveUserProfile(confirmedUser);
-            }
-            await refreshLeaderboardOnline();
-          } catch (err) {
-            console.warn('Supabase fallback notice:', err);
-          }
+            saveLeaderboard(list);
+            return list;
+          });
         }
+
+        // Show celebratory notification on top
+        setActiveNotification({
+          ...result,
+          scanId,
+          points: pointsToAward,
+          flowState: 'server_recorded',
+        });
+
+        return {
+          success: true,
+          pointsAwarded: pointsToAward,
+        };
+      } catch (err: any) {
+        console.error('Lỗi khi ghi nhận điểm:', err);
+        return {
+          success: false,
+          error: err?.message || 'Lỗi kết nối khi gửi điểm lên máy chủ',
+        };
       }
     },
-    [currentUser, isSupabaseLive, refreshLeaderboardOnline]
+    [currentUser]
   );
 
   // Handle user login / switch
@@ -637,6 +662,7 @@ export default function App() {
           isProcessing={isProcessing}
           setIsProcessing={setIsProcessing}
           onClassified={handleClassified}
+          onConfirmAwardPoints={handleAwardPoints}
           onResetLeaderboard={refreshLeaderboardOnline}
           onAddNewUser={() => setIsLoginModalOpen(true)}
           onExitFullscreen={() => setIsFullscreen(false)}
@@ -703,6 +729,7 @@ export default function App() {
               <div className="lg:col-span-7">
                 <WebcamScanner
                   onClassified={handleClassified}
+                  onConfirmAwardPoints={handleAwardPoints}
                   isProcessing={isProcessing}
                   setIsProcessing={setIsProcessing}
                   onDuplicateDetected={handleDuplicateDetected}

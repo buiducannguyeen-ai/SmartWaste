@@ -1,6 +1,7 @@
-import { LeaderboardEntry, UserProfile, WasteCategory, MisclassificationFeedbackPayload } from '../types';
+import { LeaderboardEntry, UserProfile, WasteCategory, MisclassificationFeedbackPayload, PreparationStep } from '../types';
 
 export interface RecordWastePayload {
+  scanId?: string;
   userId?: string;
   userName: string;
   email?: string;
@@ -11,10 +12,13 @@ export interface RecordWastePayload {
   points: number;
   confidence?: number;
   source?: string;
+  preparationSteps?: PreparationStep[];
+  specialHandlingNotice?: string;
 }
 
 export interface RecordResult {
   success: boolean;
+  alreadyProcessed?: boolean;
   totalPoints?: number;
   correctCount?: number;
   leaderboard?: LeaderboardEntry[];
@@ -44,6 +48,7 @@ export async function recordPointsOnServer(payload: RecordWastePayload): Promise
     const data = await res.json();
     return {
       success: true,
+      alreadyProcessed: data.alreadyProcessed,
       totalPoints: data.totalPoints,
       correctCount: data.correctCount,
       leaderboard: data.leaderboard,

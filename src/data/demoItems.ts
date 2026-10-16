@@ -1,7 +1,7 @@
 import { DemoWasteItem } from '../types';
 
 export const DEMO_WASTE_ITEMS: DemoWasteItem[] = [
-  // 1. RÁC HỮU CƠ (+1 điểm)
+  // 1. RÁC HỮU CƠ (+1 điểm) - Không yêu cầu rửa sạch rác hữu cơ tự nhiên
   {
     id: 'demo-banana',
     category: 'organic',
@@ -13,6 +13,14 @@ export const DEMO_WASTE_ITEMS: DemoWasteItem[] = [
     recyclingTip: 'Bỏ vào Thùng Rác Xanh Lá (Hữu cơ) để làm mùn giun quế hoặc ủ phân compost cho vườn trường.',
     ecoImpact: 'Sản xuất 80g phân hữu cơ vi sinh, giảm khí methane',
     emoji: '🍌',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Bỏ trực tiếp vào Thùng Rác Hữu Cơ Xanh Lá',
+        reason: 'Rác hữu cơ sạch tự nhiên, không cần rửa hay tách nắp, tự phân hủy làm mùn compost',
+        status: 'pending',
+      },
+    ],
   },
   {
     id: 'demo-apple',
@@ -25,6 +33,14 @@ export const DEMO_WASTE_ITEMS: DemoWasteItem[] = [
     recyclingTip: 'Nên để ráo nước trước khi bỏ vào thùng hữu cơ để hạn chế phát sinh mùi và nước rỉ rác.',
     ecoImpact: 'Ngăn chặn 0.12kg phát thải khí nhà kính tại bãi chôn lấp',
     emoji: '🍎',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Để ráo nước tự nhiên và bỏ vào thùng hữu cơ xanh',
+        reason: 'Hạn chế phát sinh mùi chua và giảm nước rỉ rác trong thùng',
+        status: 'pending',
+      },
+    ],
   },
   {
     id: 'demo-vegetable',
@@ -37,6 +53,14 @@ export const DEMO_WASTE_ITEMS: DemoWasteItem[] = [
     recyclingTip: 'Không trộn lẫn bao nilon bọc ngoài; chỉ bỏ phần củ quả thực vật vào thùng xanh.',
     ecoImpact: 'Phục hồi dinh dưỡng đất vườn sinh học trường học',
     emoji: '🥬',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Tách bỏ màng bọc nilon (nếu có) trước khi bỏ vào thùng xanh',
+        reason: 'Tránh để nhựa nilon lẫn vào đống ủ phân hữu cơ vi sinh',
+        status: 'pending',
+      },
+    ],
   },
   {
     id: 'demo-coffee',
@@ -49,9 +73,17 @@ export const DEMO_WASTE_ITEMS: DemoWasteItem[] = [
     recyclingTip: 'Có thể rắc trực tiếp quanh gốc cây cảnh hoặc trộn vào đống ủ hữu cơ.',
     ecoImpact: 'Tăng độ tơi xốp cho đất hữu cơ, tiết kiệm phân bón hóa học',
     emoji: '☕',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Bỏ trực tiếp vào thùng hữu cơ hoặc rắc vào gốc cây',
+        reason: 'Bổ sung khoáng vi lượng tự nhiên, tơi xốp đất cho cây trồng',
+        status: 'pending',
+      },
+    ],
   },
 
-  // 2. RÁC TÁI CHẾ (+2 điểm)
+  // 2. RÁC TÁI CHẾ (+2 điểm) - Hướng dẫn đổ cạn nước, ép dẹp, xử lý hộp sữa và ly còn nước
   {
     id: 'demo-pet-bottle',
     category: 'recyclable',
@@ -63,6 +95,46 @@ export const DEMO_WASTE_ITEMS: DemoWasteItem[] = [
     recyclingTip: 'Uống cạn nước, tháo nhãn màng co và bẹp chai dẹp lại để tiết kiệm 70% không gian chứa.',
     ecoImpact: 'Tiết kiệm 0.25kg dầu thô và giảm 0.18kg phát thải CO2',
     emoji: '🍶',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Đổ hết nước thừa bên trong chai',
+        reason: 'Tránh làm ướt các loại rác tái chế khác và giữ vệ sinh không bốc mùi',
+        status: 'pending',
+      },
+      {
+        id: 'step-2',
+        instruction: 'Tháo nhãn màng co và vặn ép dẹp thân chai',
+        reason: 'Tiết kiệm 70% thể tích thùng chứa và giúp nhà máy phân loại nhựa tinh khiết',
+        status: 'pending',
+      },
+    ],
+  },
+  {
+    id: 'demo-cup-liquid',
+    category: 'recyclable',
+    itemName: 'Ly nhựa trà sữa còn đá & nước thừa',
+    points: 2,
+    confidence: 0.96,
+    description: 'Ly nhựa PP/PET dùng trong đồ uống mang đi, cần đổ cạn chất lỏng trước khi đưa vào luồng tái chế.',
+    binColor: 'yellow',
+    recyclingTip: 'Đổ sạch nước và đá vào chậu rửa, bỏ nắp và ống hút, xếp lồng ly vào nhau.',
+    ecoImpact: 'Ngăn nước đường thu hút ruồi muỗi và làm hỏng giấy tái chế xung quanh',
+    emoji: '🥤',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Đổ hết nước thừa, đá hoặc trà sữa vào bồn rửa',
+        reason: 'Tuyệt đối không bỏ ly còn nước vào thùng để tránh làm ướt rác khác và bốc mùi',
+        status: 'pending',
+      },
+      {
+        id: 'step-2',
+        instruction: 'Tách nắp và ống hút bỏ riêng, tráng sơ hoặc ép dẹp ly',
+        reason: 'Nắp và ly là hai loại nhựa khác nhau, tách rời giúp tái chế chuẩn xác',
+        status: 'pending',
+      },
+    ],
   },
   {
     id: 'demo-can',
@@ -75,6 +147,20 @@ export const DEMO_WASTE_ITEMS: DemoWasteItem[] = [
     recyclingTip: 'Lau khô và ép bẹp lon nhôm trước khi cho vào Thùng Vàng/Xanh tái chế.',
     ecoImpact: 'Tiết kiệm 95% năng lượng điện so với quy trình luyện nhôm quặng bauxite',
     emoji: '🥫',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Đổ hết nước ngọt thừa và tráng sơ bằng nước',
+        reason: 'Tránh đường ngọt thu hút kiến gián và nấm mốc',
+        status: 'pending',
+      },
+      {
+        id: 'step-2',
+        instruction: 'Dẫm ép bẹp lon nhôm trước khi bỏ thùng vàng',
+        reason: 'Tối ưu hóa không gian chứa trong thùng rác tái chế',
+        status: 'pending',
+      },
+    ],
   },
   {
     id: 'demo-milk-carton',
@@ -87,21 +173,69 @@ export const DEMO_WASTE_ITEMS: DemoWasteItem[] = [
     recyclingTip: 'Mở 4 góc tai hộp, ép dẹp và cắm ống hút vào trong trước khi cho vào thùng tái chế thu gom.',
     ecoImpact: 'Bột giấy tái chế thành sổ ghi chép học sinh, màng nhôm ép tấm lợp sinh thái',
     emoji: '🧃',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Mở 4 góc tai hộp và ép dẹp phẳng hoàn toàn',
+        reason: 'Tiết kiệm 70% không gian thùng chứa và thuận tiện đóng kiện vận chuyển',
+        status: 'pending',
+      },
+      {
+        id: 'step-2',
+        instruction: 'Đổ ráo sữa thừa hoặc cắm ống hút vào bên trong',
+        reason: 'Tránh sữa lên men chua bốc mùi hôi và làm ố mốc các loại giấy khác',
+        status: 'pending',
+      },
+    ],
   },
   {
     id: 'demo-cardboard',
     category: 'recyclable',
-    itemName: 'Bìa thùng carton & Giấy báo cũ',
+    itemName: 'Bìa thùng carton & Giấy báo cũ sạch',
     points: 2,
     confidence: 0.96,
-    description: 'Sợi cellulose tự nhiên, có thể tái chế nghiền bột làm giấy tái sinh lên đến 5-7 chu kỳ.',
+    description: 'Sợi cellulose tự nhiên sạch, có thể tái chế nghiền bột làm giấy tái sinh lên đến 5-7 chu kỳ.',
     binColor: 'yellow',
     recyclingTip: 'Gỡ băng dính dán trên bề mặt, xếp phẳng và giữ khô ráo tuyệt đối.',
     ecoImpact: 'Mỗi 1 tấn giấy tái chế cứu được 17 cây xanh trưởng thành',
     emoji: '📦',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Bóc gỡ băng dính keo nhựa và ghim sắt dán ngoài',
+        reason: 'Loại bỏ tạp chất giúp máy nghiền bột giấy hoạt động hiệu quả',
+        status: 'pending',
+      },
+      {
+        id: 'step-2',
+        instruction: 'Gấp phẳng thùng carton và giữ khô ráo',
+        reason: 'Giấy khô mới đủ tiêu chuẩn tái chế thành giấy mới',
+        status: 'pending',
+      },
+    ],
   },
 
-  // 3. RÁC VÔ CƠ (+3 điểm)
+  // 3. RÁC VÔ CƠ (+3 điểm) - Giấy dính dầu, pin nguy hại thu gom riêng, vật sắc nhọn
+  {
+    id: 'demo-greasy-paper',
+    category: 'inorganic',
+    itemName: 'Hộp pizza & Giấy gói dính dầu mỡ',
+    points: 3,
+    confidence: 0.97,
+    description: 'Giấy và bìa đã thấm đẫm dầu mỡ thức ăn, chất béo không tan trong nước khiến sợi giấy không thể tái chế.',
+    binColor: 'orange',
+    recyclingTip: 'Bắt buộc phân loại vào Thùng Rác Vô Cơ Cam/Xám. Tuyệt đối không bỏ lẫn vào thùng giấy tái chế.',
+    ecoImpact: 'Tránh làm hỏng toàn bộ mẻ bột giấy tái chế của nhà máy',
+    emoji: '🍕',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Bỏ vào Thùng Rác Vô Cơ Cam/Xám (không bỏ thùng tái chế)',
+        reason: 'Dầu mỡ thấm sâu vào thớ giấy không thể tẩy rửa, nếu lẫn vào sẽ làm hỏng toàn bộ mẻ giấy tái chế',
+        status: 'pending',
+      },
+    ],
+  },
   {
     id: 'demo-plastic-bag',
     category: 'inorganic',
@@ -113,11 +247,19 @@ export const DEMO_WASTE_ITEMS: DemoWasteItem[] = [
     recyclingTip: 'Phân loại vào Thùng Cam/Xám (Rác vô cơ còn lại). Tuyên truyền phong trào thay bằng túi vải dù.',
     ecoImpact: 'Ngăn chặn hàng triệu hạt vi nhựa (microplastics) ngấm vào nguồn nước',
     emoji: '🛍️',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Giũ sạch rác vụn bên trong và gấp gọn túi',
+        reason: 'Giữ vệ sinh chung và hạn chế thể tích thùng rác',
+        status: 'pending',
+      },
+    ],
   },
   {
     id: 'demo-styrofoam',
     category: 'inorganic',
-    itemName: 'Hộp xốp đựng thực phẩm',
+    itemName: 'Hộp xốp đựng thực phẩm dính bẩn',
     points: 3,
     confidence: 0.93,
     description: 'Nhựa xốp Polystyrene (PS số 6), giòn vỡ, khi đốt sinh khí độc dioxin, rất khó thu gom tái chế thông thường.',
@@ -125,6 +267,14 @@ export const DEMO_WASTE_ITEMS: DemoWasteItem[] = [
     recyclingTip: 'Bỏ vào Thùng Rác Vô Cơ Còn Lại. Khuyến khích sử dụng hộp bã mía hoặc hộp inox tái sử dụng.',
     ecoImpact: 'Hạn chế rác thải cồng kềnh làm tắc nghẽn hệ thống thoát nước đô thị',
     emoji: '🍱',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Gạt bỏ hết thức ăn thừa bên trong vào thùng rác hữu cơ',
+        reason: 'Tách biệt rác thực phẩm và rác khó phân hủy để xử lý đúng cách',
+        status: 'pending',
+      },
+    ],
   },
   {
     id: 'demo-battery',
@@ -137,6 +287,24 @@ export const DEMO_WASTE_ITEMS: DemoWasteItem[] = [
     recyclingTip: 'TUYỆT ĐỐI KHÔNG vứt bừa bãi hay chôn đất. Bỏ vào hòm thu gom pin chuyên dụng của trường học.',
     ecoImpact: 'Bảo vệ nguồn nước sinh hoạt ngầm khỏi nhiễm độc kim loại nặng vĩnh viễn',
     emoji: '🔋',
+    isHazardousOrSpecial: true,
+    specialHandlingNotice: 'Lưu ý an toàn: Pin cũ là rác thải nguy hại. Tuyệt đối KHÔNG bỏ vào thùng rác sinh hoạt thông thường; chuyển đến hòm thu gom pin chuyên dụng của trường học/khu phố.',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Tuyệt đối KHÔNG vứt vào thùng rác thường hoặc chôn lấp',
+        reason: 'Chứa kim loại nặng độc hại chì, thủy ngân gây ô nhiễm vĩnh viễn nguồn nước ngầm',
+        isSafetyWarning: true,
+        status: 'pending',
+      },
+      {
+        id: 'step-2',
+        instruction: 'Bỏ vào hòm thu gom pin và rác điện tử riêng của trường',
+        reason: 'Chuyển giao cho đơn vị chuyên môn xử lý chất thải nguy hại theo tiêu chuẩn an toàn',
+        isSafetyWarning: true,
+        status: 'pending',
+      },
+    ],
   },
   {
     id: 'demo-mask',
@@ -149,5 +317,19 @@ export const DEMO_WASTE_ITEMS: DemoWasteItem[] = [
     recyclingTip: 'Cắt đứt quai khẩu trang, gấp gọn và bỏ vào thùng rác vô cơ sinh hoạt.',
     ecoImpact: 'Ngăn ngừa nguy cơ bẫy chim cá và lây lan mầm bệnh trong môi trường',
     emoji: '😷',
+    preparationSteps: [
+      {
+        id: 'step-1',
+        instruction: 'Cắt hoặc tháo đứt hai quai đeo khẩu trang',
+        reason: 'Tránh nguy cơ chim muông hoặc động vật hoang dã bị mắc kẹt quai đeo',
+        status: 'pending',
+      },
+      {
+        id: 'step-2',
+        instruction: 'Gấp gọn mặt trong lại và bỏ vào thùng rác vô cơ',
+        reason: 'Hạn chế vi khuẩn phát tán ra môi trường xung quanh',
+        status: 'pending',
+      },
+    ],
   },
 ];

@@ -281,6 +281,14 @@ export const ClassificationHistory: React.FC<ClassificationHistoryProps> = ({
                           <span>Thu gom riêng: {item.specialHandlingNotice || 'Pin / rác nguy hại cần điểm thu gom riêng'}</span>
                         </div>
                       )}
+
+                      {/* Local regulation note badge */}
+                      {item.localRuleNote && (
+                        <div className="mt-1 text-[10px] font-semibold text-blue-300 flex items-center gap-1 bg-blue-950/50 border border-blue-500/40 px-2 py-0.5 rounded-md w-fit">
+                          <Info className="w-3 h-3 text-blue-400" />
+                          <span>Quy định địa phương: {item.localRuleNote}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 

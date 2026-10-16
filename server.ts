@@ -110,55 +110,55 @@ app.post("/api/classify-waste", async (req, res) => {
     }
 
     try {
-      const prompt = `Bạn là chuyên gia AI phân loại rác thông minh cho dự án cuộc thi STEM môi trường.
-Hãy phân tích hình ảnh này và thực hiện các bước kiểm tra theo quy trình chuẩn:
+      const prompt = `Bạn là chuyên gia AI phân loại rác thông minh cho dự án giáo dục STEM môi trường học đường SmartWaste.
+Hãy phân tích hình ảnh này và thực hiện quy trình nhận diện theo 5 tiêu chí bắt buộc:
 
-BƯỚC 1: XÁC MINH VẬT THỂ CÓ PHẢI LÀ RÁC THẢI HAY KHÔNG (isWaste):
-- Hãy quan sát kỹ toàn bộ ảnh xem có thực sự xuất hiện một vật thể rác thải, phế liệu, rác sinh hoạt cần bỏ thùng rác hay không.
-- Nếu ảnh KHÔNG CHỨA RÁC (ví dụ: ảnh selfie, mặt người, cơ thể người, thú cưng, căn phòng sạch, tường trống, xe cộ, đồ ăn nguyên vẹn ngon lành trên bàn, vật dụng cá nhân bình thường đang dùng, hoặc ảnh mờ đen tối không rõ):
-  -> Đặt isWaste = false, category = "unknown", points = 0, itemName = tên vật thể phát hiện (ví dụ: "Người / Khuôn mặt", "Thú cưng", "Môi trường không có rác"), rejectionReason = "Hình ảnh không phải là rác thải hoặc không phát hiện vật thể cần phân loại. Vui lòng đưa mẫu rác vào trước camera."
-- Nếu ảnh CHỨA RÁC THẢI RÕ RÀNG:
-  -> Đặt isWaste = true và phân loại vào Bước 2.
+TIÊU CHÍ PHÂN TÍCH:
+1. VẬT THỂ LÀ GÌ? Xác định chính xác tên vật thể rác.
+2. ĐƯỢC LÀM TỪ CHẤT LIỆU GÌ? (Nhựa PET, PP, HDPE; nhựa xốp Polystyrene PS số 6; bột giấy nguyên chất; giấy tráng màng PE; màng nhôm đa lớp phức hợp; kim loại nhôm/sắt; chất hữu cơ sinh học...).
+3. TÌNH TRẠNG THỰC TẾ: Có thức ăn thừa, chất lỏng (nước, đá, sữa), dầu mỡ hay không?
+4. KHẢ NĂNG TÁI CHẾ THÔNG THƯỜNG: Vật thể có thể tái chế trong điều kiện xử lý rác thông thường hay không?
+5. CÓ THUỘC NHÓM CẦN THU GOM ĐẶC BIỆT HOẶC NGUY HẠI KHÔNG? (Pin, ắc quy, nhiệt kế, bóng đèn huỳnh quang, vật sắc nhọn...).
 
-BƯỚC 2: PHÂN LOẠI RÁC VÀ TÍNH ĐIỂM CHUẨN XÁC:
-1. "organic" (Rác hữu cơ) -> số điểm: 1. Ví dụ: vỏ hoa quả (chuối, táo...), rau củ hỏng, lá cây, thức ăn thừa, bã trà/cà phê.
-2. "recyclable" (Rác tái chế) -> số điểm: 2. Ví dụ: chai nhựa PET, vỏ lon nhôm/kim loại, giấy báo vụn, thùng bìa carton, chai lọ thủy tinh, cốc nhựa sạch.
-3. "inorganic" (Rác vô cơ / Rác còn lại khó phân hủy) -> số điểm: 3. Ví dụ: túi nilon, màng bọc thực phẩm, hộp xốp vỡ bẩn, tã bỉm, mảnh gốm sứ vỡ, pin cũ, bóng đèn, khẩu trang y tế đã qua sử dụng.
+QUY TẮC PHÂN LOẠI & TÍNH ĐIỂM (ƯU TIÊN VẬT THỂ VÀ TÌNH TRẠNG THỰC TẾ):
+- 1. "organic" (Rác hữu cơ) -> 1 ĐIỂM: Vỏ trái cây, rau củ quả, lá cây, thức ăn thừa, bã trà/cà phê.
+- 2. "recyclable" (Rác tái chế) -> 2 ĐIỂM: Chai nhựa sạch rỗng, vỏ lon nhôm/sắt, giấy báo sách vở sạch, thùng carton khô, ly/hộp nhựa sạch không dính mỡ.
+- 3. "inorganic" (Rác vô cơ / Rác còn lại khó phân hủy) -> 3 ĐIỂM: Rác không thể tái chế thông thường hoặc giấy/nhựa dính bẩn mỡ không tẩy rửa được; túi nilon, màng bọc bẩn, hộp xốp PS vỡ bẩn, tã bỉm, khẩu trang bẩn.
 
-BƯỚC 3: KIỂM TRA CHỐNG GIAN LẬN (Anti-Cheat Spoof Check):
-- Kiểm tra xem người dùng có đang giơ một màn hình điện thoại, máy tính bảng hoặc ảnh in 2D phẳng lên trước camera để giả mạo quét ảnh lấy điểm thay vì rác thật hay không (nhận diện qua viền màn hình, phản quang đèn nền, lưới điểm ảnh hiển thị, góc phẳng 2D).
-- Nếu phát hiện rõ ràng là giơ màn hình điện thoại hoặc ảnh 2D để gian lận, hãy đặt isScreenOrPhotoSpoof = true và giải thích trong spoofReason.
+ĐẶC BIỆT CHÚ Ý CÁC VẬT THỂ DỄ NHẦM LẪN:
+1. HỘP SỮA GIẤY NHIỀU LỚP (Tetra Pak): Cấu tạo 6 lớp phức hợp (giấy, nhôm, PE). Thuộc nhóm Tái chế NẾU địa phương/trường học có chương trình thu gom riêng vỏ hộp sữa học đường (yêu cầu mở 4 góc tai, ép dẹp, dốc ráo sữa). Nếu không có thu gom riêng hoặc bị ẩm mốc nặng thì thuộc Rác vô cơ. Bắt buộc ghi chú trong localRuleNote.
+2. LY TRÀ SỮA CÒN NƯỚC: Ly nhựa PP/PET còn đá, nước đường. TUYỆT ĐỐI KHÔNG bỏ nguyên ly còn nước vào thùng. Hướng dẫn học sinh: Đổ cạn nước và đá vào chậu rửa, tách nắp và ống hút riêng, sau đó mới bỏ thân ly vào thùng tái chế.
+3. HỘP THỨC ĂN BẰNG NHỰA BỊ BẨN: Nếu hộp nhựa dính dầu mỡ, nước sốt không thể tráng rửa sạch ngay -> Phải phân loại vào Rác vô cơ (inorganic). Chỉ tái chế khi đã loại bỏ thức ăn thừa và tráng sạch mỡ.
+4. GIẤY DÍNH DẦU (Hộp pizza dính mỡ, giấy gói đồ chiên, khăn giấy dính dầu): TUYỆT ĐỐI KHÔNG BỎ THÙNG TÁI CHẾ. Bắt buộc là Rác vô cơ (inorganic, 3 điểm) vì dầu mỡ thấm sâu vào thớ sợi, không thể hòa tan trong nước khi nghiền bột, sẽ làm hỏng toàn bộ mẻ tái chế giấy.
+5. PIN CŨ & RÁC ĐIỆN TỬ: RÁC NGUY HẠI. Chứa chì, thủy ngân, cadmium. TUYỆT ĐỐI KHÔNG bỏ vào thùng rác sinh hoạt thông thường. Đặt isHazardousOrSpecial = true, phân loại vào Rác vô cơ (3 điểm) kèm cảnh báo an toàn bắt buộc: Gom riêng và chuyển đến hòm thu gom pin chuyên dụng của trường học.
+6. CHAI NHỰA CÓ CHẤT LỎNG: Chai PET còn nước ngọt/nước khoáng. Phải hướng dẫn đổ hết nước thừa, tháo nhãn màng co và vặn ép dẹp trước khi bỏ thùng tái chế.
+7. BAO BÌ KẾT HỢP GIẤY, NHỰA VÀ KIM LOẠI (Gói mì tôm, túi bánh snack tráng bạc, màng nhôm phức hợp): Khó phân tách trong điều kiện thông thường -> Phân loại vào Rác vô cơ (inorganic, 3 điểm).
 
-BƯỚC 4: HƯỚNG DẪN 1-2 VIỆC CẦN THỰC HIỆN TRƯỚC KHI BỎ RÁC (preparationSteps):
-- Trả về tối đa 2 bước xử lý cụ thể, ngắn gọn, dễ hiểu và phù hợp nhất cho học sinh đối với vật thể này trước khi bỏ vào thùng.
-- Phù hợp với chất liệu và vật thể thực tế:
-  * Chai nhựa còn nước/chất lỏng: Đổ hết nước thừa; đóng nắp hoặc tháo tách nắp tùy quy định thu gom.
-  * Hộp sữa giấy: Đổ hết sữa thừa, làm sạch sơ hoặc ép dẹp nếu phù hợp.
-  * Hộp nhựa đựng thức ăn: Loại bỏ hoàn toàn thức ăn thừa, tráng sơ sạch dầu mỡ.
-  * Giấy dính dầu mỡ / khăn ướt: Xếp vào rác vô cơ (giải thích ngắn vì dầu mỡ làm hỏng quá trình tái chế giấy sạch).
-  * Pin cũ / đồ điện tử / bóng đèn: Xếp vào rác vô cơ (kèm cảnh báo an toàn thu gom riêng). CẢNH BÁO AN TOÀN TUYỆT ĐỐI: Không bỏ chung thùng rác sinh hoạt thông thường, chuyển đến điểm thu gom pin chuyên dụng; tuyệt đối không đập, cạy hoặc xử lý nguy hiểm. Đặt isSafetyWarning = true.
-  * Vật sắc nhọn (mảnh chai vỡ, kim tiêm, dao lam): Gói bọc kỹ đầu nhọn bằng giấy dày hoặc bìa carton trước khi bỏ thùng rác vô cơ để bảo vệ người thu gom. Đặt isSafetyWarning = true.
-  * Rác hữu cơ sạch (vỏ chuối, rau thừa): Bỏ trực tiếp vào thùng hữu cơ (không yêu cầu rửa hoặc làm sạch không cần thiết).
-- KHÔNG mặc định mọi vật dụng đều phải rửa, tháo rời hoặc tách nắp nếu không cần thiết.
-- Với pin, vật sắc nhọn, rác nguy hại, PHẢI ưu tiên an toàn, hướng dẫn thu gom riêng, KHÔNG yêu cầu học sinh tự tháo hay xử lý nguy hiểm.
+QUY TẮC CẦN NHỚ:
+- KHÔNG mặc định mọi vật có giấy đều là giấy tái chế.
+- KHÔNG mặc định mọi vật bằng nhựa đều có thể bỏ ngay vào thùng tái chế.
+- THIẾU THÔNG TIN: Nếu ảnh mờ, tối, vật thể bị che khuất hoặc không rõ tình trạng (ví dụ không rõ bên trong còn nước/dầu hay không), hãy đặt isUncertain = true, confidence < 0.6 và nêu rõ yêu cầu chụp lại hoặc cung cấp thêm thông tin trong uncertaintyReason.
+- QUY ĐỊNH ĐỊA PHƯƠNG: Nếu việc tái chế phụ thuộc vào cơ sở hạ tầng hoặc quy định địa phương (như hộp sữa giấy, thủy tinh vỡ), hãy nêu rõ trong localRuleNote.
+- HƯỚNG DẪN 1-2 BƯỚC XỬ LÝ (preparationSteps): Tạo tối đa 2 bước ngắn gọn, thiết thực cho học sinh thực hiện. Với pin, rác nguy hại, vật sắc nhọn: ưu tiên an toàn, đặt isSafetyWarning = true.
 
 Yêu cầu trả về JSON chuẩn theo schema:
 - isWaste: boolean, true nếu là rác thải, false nếu không phải rác hoặc không nhận diện được.
 - category: "organic", "recyclable", "inorganic", hoặc "unknown" (nếu isWaste=false).
-- itemName: tên ngắn gọn tiếng Việt của món rác hoặc vật thể trong ảnh.
+- itemName: tên ngắn gọn tiếng Việt của món rác trong ảnh.
 - points: 1 nếu là organic, 2 nếu là recyclable, 3 nếu là inorganic, 0 nếu không phải rác hoặc chưa chắc chắn.
-- confidence: số thực từ 0.0 đến 1.0 biểu thị độ tin cậy ước tính của AI (hãy thể hiện trung thực mức độ chắc chắn; nếu ảnh mờ, khuất góc, không rõ vật thể hoặc phân vân giữa các nhóm thì cho điểm số confidence thấp phản ánh đúng mức độ không chắc chắn, không ép buộc khoảng cố định).
-- isUncertain: boolean, true nếu AI chưa chắc chắn về loại rác này, không rõ vật thể hoặc phân vân giữa các nhóm.
-- uncertaintyReason: nếu isUncertain=true, ghi lý do tiếng Việt (ví dụ: "AI chưa chắc chắn về vật thể này. Vui lòng chụp lại ở nơi đủ ánh sáng hoặc chọn báo cáo AI nhận nhầm.").
-- preparationSteps: mảng tối đa 2 bước thực hiện trước khi bỏ rác (mỗi bước có id, instruction, reason, isSafetyWarning).
-- specialHandlingNotice: chuỗi hướng dẫn thu gom an toàn nếu là pin, vật nhọn hoặc rác nguy hại.
-- isHazardousOrSpecial: boolean, true nếu là pin cũ, mảnh vỡ hoặc vật cần điểm thu gom riêng.
-- description: giải thích 1 câu ngắn về chất liệu và tính chất phân hủy.
-- binColor: màu thùng rác tương ứng ("green" cho hữu cơ, "yellow" cho tái chế, "orange" cho vô cơ, "gray" nếu không xác định).
-- recyclingTip: lời khuyên bảo vệ môi trường và cách bỏ rác chuẩn STEM cho học sinh.
+- confidence: số thực từ 0.0 đến 1.0 biểu thị trung thực độ tin cậy của AI.
+- isUncertain: boolean, true nếu AI chưa chắc chắn hoặc thiếu thông tin để phân loại chính xác.
+- uncertaintyReason: lý do chưa chắc chắn và yêu cầu người dùng chụp lại hoặc cung cấp thêm chi tiết.
+- preparationSteps: mảng tối đa 2 bước xử lý cụ thể trước khi bỏ rác (id, instruction, reason, isSafetyWarning).
+- specialHandlingNotice: hướng dẫn thu gom an toàn nếu là pin, rác nguy hại, vật sắc nhọn.
+- isHazardousOrSpecial: boolean, true nếu là pin, thiết bị điện tử, vật sắc nhọn.
+- localRuleNote: lưu ý nếu khả năng tái chế phụ thuộc vào quy định thu gom địa phương.
+- description: giải thích 1 câu ngắn về chất liệu và tình trạng thực tế.
+- binColor: "green", "yellow", "orange", hoặc "gray".
+- recyclingTip: lời khuyên bảo vệ môi trường chuẩn STEM cho học sinh.
 - ecoImpact: số liệu ước tính bảo vệ môi trường.
-- rejectionReason: nếu isWaste = false, ghi rõ lý do từ chối (tiếng Việt).
-- isScreenOrPhotoSpoof: boolean, true nếu phát hiện ảnh chụp từ màn hình hoặc ảnh giả mạo.
+- rejectionReason: nếu isWaste = false, ghi rõ lý do.
+- isScreenOrPhotoSpoof: boolean, true nếu phát hiện ảnh chụp từ màn hình điện thoại hoặc ảnh 2D giả mạo.
 - spoofReason: chuỗi mô tả nếu phát hiện gian lận màn hình.
 ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
 
@@ -214,11 +214,11 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
                   },
                   isUncertain: {
                     type: Type.BOOLEAN,
-                    description: "True nếu AI chưa chắc chắn về vật thể hoặc loại rác này",
+                    description: "True nếu AI chưa chắc chắn về vật thể hoặc thiếu thông tin",
                   },
                   uncertaintyReason: {
                     type: Type.STRING,
-                    description: "Lý do chưa chắc chắn nếu isUncertain=true",
+                    description: "Lý do chưa chắc chắn và hướng dẫn chụp lại hoặc cung cấp thêm thông tin",
                   },
                   preparationSteps: {
                     type: Type.ARRAY,
@@ -241,6 +241,10 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
                   isHazardousOrSpecial: {
                     type: Type.BOOLEAN,
                     description: "True nếu là pin cũ, mảnh vỡ hoặc vật cần điểm thu gom riêng",
+                  },
+                  localRuleNote: {
+                    type: Type.STRING,
+                    description: "Ghi chú nếu việc phân loại/tái chế phụ thuộc vào quy định thu gom địa phương",
                   },
                   description: {
                     type: Type.STRING,
@@ -377,6 +381,33 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
       }
 
       // Ensure points and category align strictly with rules
+      // 0. STRICT RULE CHECK FOR OILY PAPER & GREASY PACKAGING:
+      // Giấy dính dầu mỡ / Hộp pizza dính mỡ KHÔNG THỂ TÁI CHẾ bột giấy -> Bắt buộc là Rác vô cơ (inorganic, 3 điểm)
+      const itemNameLower = (result.itemName || "").toLowerCase();
+      const isOilyPaper =
+        (itemNameLower.includes("giấy") || itemNameLower.includes("pizza") || itemNameLower.includes("bìa") || itemNameLower.includes("khăn giấy")) &&
+        (itemNameLower.includes("dầu") || itemNameLower.includes("mỡ") || itemNameLower.includes("dính dầu") || itemNameLower.includes("dính mỡ") || itemNameLower.includes("thấm dầu"));
+
+      if (isOilyPaper) {
+        result.category = "inorganic";
+        result.description = result.description || "Giấy dính dầu mỡ không thể phân tách sợi bột sạch để tái chế.";
+        result.recyclingTip = "Phân loại vào thùng rác vô cơ (cam/xám). Dầu mỡ sẽ làm hỏng quá trình nghiền bột tái chế giấy sạch.";
+      }
+
+      // Check for hazardous or special items (batteries, chemicals, sharps)
+      const isSpecialHazardous =
+        result.isHazardousOrSpecial === true ||
+        /pin|ắc quy|pin cúc|nhiệt kế|thủy ngân|bóng đèn huỳnh quang|pin cũ|rác điện tử/i.test(itemNameLower);
+
+      if (isSpecialHazardous) {
+        result.category = "inorganic";
+        result.isHazardousOrSpecial = true;
+        result.specialHandlingNotice =
+          result.specialHandlingNotice ||
+          "Lưu ý an toàn: Pin cũ và chất thải điện tử chứa kim loại nặng nguy hại (chì, thủy ngân). Tuyệt đối không bỏ vào thùng rác thường; chuyển tới điểm thu gom pin chuyên dụng của trường học/khu phố.";
+      }
+
+      // Ensure points and category align strictly with rules
       if (result.category === "organic") {
         result.points = 1;
         result.binColor = "green";
@@ -397,8 +428,92 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
         });
       }
 
-      // Standardize 1-2 preparation steps (default status: 'pending')
-      if (Array.isArray(result.preparationSteps) && result.preparationSteps.length > 0) {
+      // 1. Preparation steps generation adhering to Prompt 3:
+      // - Max 2 steps
+      // - Based on real physical state of the object (never blindly mandate washing clean organics)
+      // - Dedicated handling for hazardous, sharps, milk cartons, cups with liquid, oily paper
+      if (isOilyPaper) {
+        result.preparationSteps = [
+          {
+            id: "step-1",
+            instruction: "Phân loại vào Thùng Rác Vô Cơ Cam/Xám (không bỏ thùng tái chế)",
+            reason: "Dầu mỡ thấm sâu vào xơ sợi giấy khiến giấy không thể nghiền bột tái chế, sẽ làm hỏng cả mẻ giấy sạch",
+            status: "pending",
+          },
+        ];
+      } else if (isSpecialHazardous) {
+        result.preparationSteps = [
+          {
+            id: "step-1",
+            instruction: "Tuyệt đối KHÔNG bỏ vào thùng rác sinh hoạt thông thường",
+            reason: "Chứa kim loại nặng chì, thủy ngân cực độc hại gây ô nhiễm vĩnh viễn nguồn nước ngầm",
+            isSafetyWarning: true,
+            status: "pending",
+          },
+          {
+            id: "step-2",
+            instruction: "Gom riêng vào túi/hộp và mang đến điểm thu gom pin nguy hại của trường học",
+            reason: "Chuyển giao cho đơn vị chuyên trách xử lý rác nguy hại theo quy chuẩn an toàn môi trường",
+            isSafetyWarning: true,
+            status: "pending",
+          },
+        ];
+      } else if (/mảnh vỡ|kính vỡ|thủy tinh vỡ|kim tiêm|dao lam|vỏ chai vỡ/i.test(itemNameLower)) {
+        result.isHazardousOrSpecial = true;
+        result.specialHandlingNotice =
+          result.specialHandlingNotice ||
+          "Cảnh báo an toàn: Vật sắc nhọn có nguy cơ gây thương tích nghiêm trọng cho học sinh và công nhân thu gom rác. Cần gói bọc cẩn thận.";
+        result.preparationSteps = [
+          {
+            id: "step-1",
+            instruction: "Bọc kín phần sắc nhọn bằng bìa carton cứng hoặc giấy báo dày nhiều lớp",
+            reason: "Bảo đảm an toàn tuyệt đối, tránh cứa đứt tay người thu gom rác",
+            isSafetyWarning: true,
+            status: "pending",
+          },
+          {
+            id: "step-2",
+            instruction: "Dán kín băng dính bên ngoài và bỏ vào thùng rác vô cơ",
+            reason: "Ngăn mảnh vỡ bung ra trong quá trình vận chuyển rác",
+            isSafetyWarning: true,
+            status: "pending",
+          },
+        ];
+      } else if (
+        itemNameLower.includes("sữa") &&
+        (itemNameLower.includes("hộp") || itemNameLower.includes("carton") || itemNameLower.includes("giấy") || itemNameLower.includes("vỏ") || itemNameLower.includes("tetra"))
+      ) {
+        result.preparationSteps = [
+          {
+            id: "step-1",
+            instruction: "Mở 4 góc tai hộp và ép dẹp phẳng hoàn toàn",
+            reason: "Tiết kiệm 70% không gian thùng chứa rác tái chế",
+            status: "pending",
+          },
+          {
+            id: "step-2",
+            instruction: "Đổ ráo sữa thừa bên trong hoặc cắm ống hút vào trong",
+            reason: "Tránh sữa lên men chua bốc mùi hôi và làm ố mốc các loại giấy khác",
+            status: "pending",
+          },
+        ];
+      } else if (itemNameLower.includes("ly") || itemNameLower.includes("cốc")) {
+        result.preparationSteps = [
+          {
+            id: "step-1",
+            instruction: "Đổ hết nước thừa, đá hoặc trà sữa vào bồn rửa trước khi bỏ rác",
+            reason: "Tránh làm ướt các loại rác tái chế khác và giữ vệ sinh không bốc mùi",
+            status: "pending",
+          },
+          {
+            id: "step-2",
+            instruction: "Tháo nắp và ống hút bỏ riêng, tráng sơ hoặc ép dẹp ly",
+            reason: "Phân loại riêng các thành phần nắp/ly và tiết kiệm thể tích thùng rác",
+            status: "pending",
+          },
+        ];
+      } else if (Array.isArray(result.preparationSteps) && result.preparationSteps.length > 0) {
+        // AI generated steps from vision prompt: clamp to max 2 steps
         result.preparationSteps = result.preparationSteps.slice(0, 2).map((s: any, idx: number) => ({
           id: s.id || `step-${idx + 1}`,
           instruction: String(s.instruction || "").trim(),
@@ -407,44 +522,26 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
           status: "pending",
         }));
       } else {
-        const itemNameLower = (result.itemName || "").toLowerCase();
+        // Fallbacks for general items
         const steps: any[] = [];
-        if (itemNameLower.includes("pin") || itemNameLower.includes("ắc quy") || itemNameLower.includes("bóng đèn")) {
-          steps.push({
-            id: "step-1",
-            instruction: "Không bỏ vào thùng rác thường, gom riêng chuyển điểm thu gom pin",
-            reason: "Chứa chì và hóa chất độc hại, cần thu gom nguy hại riêng",
-            isSafetyWarning: true,
-            status: "pending",
-          });
-        } else if (itemNameLower.includes("chai") || itemNameLower.includes("lon") || itemNameLower.includes("hộp")) {
+        if (itemNameLower.includes("chai") || itemNameLower.includes("lon")) {
           steps.push({
             id: "step-1",
             instruction: "Đổ hết nước hoặc thức ăn thừa bên trong",
             reason: "Tránh làm ướt các loại rác tái chế khác và giữ vệ sinh",
             status: "pending",
           });
-          if (itemNameLower.includes("sữa") || itemNameLower.includes("carton") || itemNameLower.includes("nhựa")) {
-            steps.push({
-              id: "step-2",
-              instruction: "Làm sạch sơ hoặc ép dẹp gọn gàng",
-              reason: "Tiết kiệm thể tích thùng rác",
-              status: "pending",
-            });
-          }
-        } else if (itemNameLower.includes("mảnh vỡ") || itemNameLower.includes("kính") || itemNameLower.includes("thủy tinh vỡ")) {
           steps.push({
-            id: "step-1",
-            instruction: "Bọc kín phần sắc nhọn bằng bìa cứng hoặc giấy báo dày",
-            reason: "Bảo đảm an toàn cho người thu gom rác",
-            isSafetyWarning: true,
+            id: "step-2",
+            instruction: "Làm sạch sơ hoặc ép dẹp gọn gàng",
+            reason: "Tiết kiệm thể tích thùng rác",
             status: "pending",
           });
         } else if (result.category === "organic") {
           steps.push({
             id: "step-1",
             instruction: "Bỏ trực tiếp vào thùng rác hữu cơ xanh lá",
-            reason: "Ủ thành phân compost vi sinh cho cây trồng",
+            reason: "Ủ thành phân compost vi sinh cho cây trồng vườn trường (không cần rửa sạch)",
             status: "pending",
           });
         } else {
@@ -458,16 +555,8 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
         result.preparationSteps = steps;
       }
 
-      // Check for hazardous or special items (batteries, chemicals, sharps)
-      const isSpecialHazardous =
-        result.isHazardousOrSpecial === true ||
-        (result.itemName && /pin|ắc quy|pin cúc|nhiệt kế|thủy ngân|kim tiêm|dao lam|bóng đèn huỳnh quang/i.test(result.itemName));
-      if (isSpecialHazardous) {
-        result.isHazardousOrSpecial = true;
-        result.specialHandlingNotice =
-          result.specialHandlingNotice ||
-          "Lưu ý an toàn: Đây là rác thải đặc biệt / nguy hại. Không bỏ vào thùng rác tái chế hay hữu cơ thông thường; vui lòng mang đến điểm thu gom rác nguy hại chuyên dụng.";
-      }
+      const scanId = "scan-" + Date.now() + "-" + Math.random().toString(36).substring(2, 9);
+      result.scanId = scanId;
 
       return res.json({
         success: true,
@@ -741,6 +830,7 @@ app.get("/api/leaderboard", async (_req, res) => {
 app.post("/api/leaderboard/record", (req, res) => {
   try {
     const {
+      scanId,
       userId,
       userName,
       email,
@@ -751,6 +841,8 @@ app.post("/api/leaderboard/record", (req, res) => {
       points,
       confidence,
       source,
+      preparationSteps,
+      specialHandlingNotice,
     } = req.body;
 
     if (!userName || !itemName || !category) {
@@ -761,6 +853,7 @@ app.post("/api/leaderboard/record", (req, res) => {
     }
 
     const result = recordClassification({
+      scanId,
       userId,
       userName,
       email,
@@ -771,10 +864,13 @@ app.post("/api/leaderboard/record", (req, res) => {
       points: Number(points) || 1,
       confidence: Number(confidence) || 0.95,
       source: source || "webcam",
+      preparationSteps,
+      specialHandlingNotice,
     });
 
     return res.json({
       success: true,
+      alreadyProcessed: result.alreadyProcessed || false,
       player: result.player,
       totalPoints: result.player.totalPoints,
       correctCount: result.player.correctCount,

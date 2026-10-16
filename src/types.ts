@@ -2,6 +2,12 @@ export type WasteCategory = 'organic' | 'recyclable' | 'inorganic';
 
 export type PreparationStepStatus = 'pending' | 'completed' | 'not_applicable';
 
+export type ClassificationFlowState =
+  | 'idle' // Chưa quét hoặc đã kết thúc
+  | 'ai_recognized' // AI đã nhận diện thành công, chưa cộng điểm
+  | 'user_confirmed' // Học sinh đã xác nhận các bước chuẩn bị và nhấn xác nhận
+  | 'server_recorded'; // Máy chủ đã ghi nhận điểm thành công
+
 export interface PreparationStep {
   id: string;
   instruction: string;
@@ -35,6 +41,9 @@ export interface WasteClassificationResult {
   preparationSteps?: PreparationStep[];
   specialHandlingNotice?: string;
   isHazardousOrSpecial?: boolean;
+  localRuleNote?: string; // Lưu ý nếu quy định thu gom phụ thuộc vào địa phương
+  scanId?: string; // Định danh duy nhất cho mỗi lượt quét
+  flowState?: ClassificationFlowState;
 }
 
 export interface MisclassificationFeedbackPayload {
@@ -131,6 +140,9 @@ export interface DemoWasteItem {
   ecoImpact: string;
   emoji: string;
   imageUrl?: string;
+  preparationSteps?: PreparationStep[];
+  specialHandlingNotice?: string;
+  isHazardousOrSpecial?: boolean;
 }
 
 export type ReportSeverity = 'low' | 'medium' | 'high' | 'urgent';

@@ -45,6 +45,9 @@ import { PreparationChecklistModal } from './PreparationChecklistModal';
 
 interface WebcamScannerProps {
   onClassified: (result: WasteClassificationResult) => void;
+  onConfirmAwardPoints?: (
+    result: WasteClassificationResult
+  ) => Promise<{ success: boolean; error?: string; alreadyProcessed?: boolean; pointsAwarded?: number }>;
   isProcessing: boolean;
   setIsProcessing: (val: boolean) => void;
   onDuplicateDetected?: (alert: DuplicateAlertInfo) => void;
@@ -53,6 +56,7 @@ interface WebcamScannerProps {
 
 export const WebcamScanner: React.FC<WebcamScannerProps> = ({
   onClassified,
+  onConfirmAwardPoints,
   isProcessing,
   setIsProcessing,
   onDuplicateDetected,
@@ -88,6 +92,9 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
   const [activePreparationItem, setActivePreparationItem] = useState<WasteClassificationResult | null>(null);
   const [activePreparationSteps, setActivePreparationSteps] = useState<PreparationStep[]>([]);
   const [isChecklistOpen, setIsChecklistOpen] = useState(false);
+  const [isSubmittingPoints, setIsSubmittingPoints] = useState(false);
+  const [pointsSubmissionError, setPointsSubmissionError] = useState<string | null>(null);
+  const [pointsSubmissionSuccess, setPointsSubmissionSuccess] = useState<string | null>(null);
   const [lastSimilarity, setLastSimilarity] = useState<number>(0);
   const [duplicateBlockedCount, setDuplicateBlockedCount] = useState(0);
 
@@ -216,32 +223,80 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
     );
   };
 
-  // Complete preparation steps and award points
-  const handleConfirmCompletePreparation = () => {
-    if (!activePreparationItem) return;
+  // Complete preparation steps and award points (triggered strictly when student clicks "Tôi đã xử lý và bỏ rác đúng cách")
+  const handleConfirmCompletePreparation = async () => {
+    if (!activePreparationItem || isSubmittingPoints) return;
+
+    const scanId =
+      activePreparationItem.scanId ||
+      'scan-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+
     const finalResult: WasteClassificationResult = {
       ...activePreparationItem,
+      scanId,
       preparationSteps: activePreparationSteps,
+      flowState: 'user_confirmed',
     };
-    setIsChecklistOpen(false);
-    if (antiCheatEnabled) {
-      setWaitingForBinDeposit(true);
+
+    setIsSubmittingPoints(true);
+    setPointsSubmissionError(null);
+    setPointsSubmissionSuccess(null);
+
+    try {
+      if (onConfirmAwardPoints) {
+        const res = await onConfirmAwardPoints(finalResult);
+        if (res.success) {
+          const awarded = res.pointsAwarded ?? finalResult.points;
+          setPointsSubmissionSuccess(
+            `Chúc mừng bạn đã xử lý và phân loại rác đúng cách! Đã cộng +${awarded} điểm vào tài khoản.`
+          );
+          setPreviousItemName(finalResult.itemName);
+          setScanStatusText(
+            `ĐÃ XÁC NHẬN & CỘNG ĐIỂM: ${finalResult.itemName.toUpperCase()} (+${awarded} Đ)`
+          );
+          setTimeout(() => {
+            setIsChecklistOpen(false);
+            setActivePreparationItem(null);
+            setActivePreparationSteps([]);
+            setIsSubmittingPoints(false);
+            setPointsSubmissionSuccess(null);
+            setWaitingForBinDeposit(true);
+          }, 1500);
+        } else {
+          setIsSubmittingPoints(false);
+          setPointsSubmissionError(
+            res.error || 'Máy chủ không thể lưu điểm. Vui lòng bấm Thử lại để ghi nhận điểm an toàn.'
+          );
+        }
+      } else {
+        // Direct callback fallback
+        onClassified(finalResult);
+        setIsChecklistOpen(false);
+        setActivePreparationItem(null);
+        setActivePreparationSteps([]);
+        setIsSubmittingPoints(false);
+        setWaitingForBinDeposit(true);
+      }
+    } catch (err: any) {
+      setIsSubmittingPoints(false);
+      setPointsSubmissionError(
+        err?.message || 'Lỗi mạng khi lưu điểm. Vui lòng kiểm tra kết nối và bấm Thử lại.'
+      );
     }
-    setPreviousItemName(finalResult.itemName);
-    playPointSound(finalResult.points);
-    onClassified(finalResult);
-    setScanStatusText(`ĐÃ HOÀN TẤT & BỎ THÙNG: ${finalResult.itemName.toUpperCase()} (+${finalResult.points} Đ)`);
   };
 
-  // Cancel preparation process
+  // Cancel preparation process (STRICTLY NO POINTS AWARDED)
   const handleCancelPreparation = () => {
     setIsChecklistOpen(false);
     setActivePreparationItem(null);
     setActivePreparationSteps([]);
-    setScanStatusText('ĐÃ HỦY: SẴN SÀNG QUÉT MẪU MỚI');
+    setIsSubmittingPoints(false);
+    setPointsSubmissionError(null);
+    setPointsSubmissionSuccess(null);
+    setScanStatusText('ĐÃ HỦY: SẴN SÀNG QUÉT MẪU MỚI (+0 ĐIỂM)');
   };
 
-  // Confirm that waste has been prepared and dropped into bin (clears duplicate lock)
+  // Confirm student self-declaration of proper disposal into designated bin
   const handleConfirmBinDrop = () => {
     setWaitingForBinDeposit(false);
     setActivePreparationItem(null);
@@ -249,7 +304,7 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
     setPreviousFingerprint(null);
     setLastDemoItemId(null);
     setLastSimilarity(0);
-    setScanStatusText('CẢM BIẾN XÁC NHẬN: RÁC ĐÃ VÀO THÙNG & SẴN SÀNG');
+    setScanStatusText('HỌC SINH ĐÃ XÁC NHẬN: ĐÃ XỬ LÝ & BỎ RÁC ĐÚNG THÙNG');
   };
 
   // Perform AI Classification on an image base64
@@ -408,8 +463,14 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
       // 3. Valid waste successfully recognized by AI
       if (result.success && result.data && ['organic', 'recyclable', 'inorganic'].includes(result.data.category)) {
         setScanErrorMessage(null);
+        const scanId =
+          result.data.scanId ||
+          'scan-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+
         const classified: WasteClassificationResult = {
           ...result.data,
+          scanId,
+          flowState: 'ai_recognized',
           rawImage: base64Image,
           fingerprintHash: currentFingerprint?.dHash,
           source: scanSource,
@@ -473,10 +534,15 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
           }
         }
 
+        // CRITICAL: At this point AI recognized successfully, BUT NO POINTS ARE AWARDED YET!
+        // Display modal with checklist so student can confirm steps first.
         setActivePreparationItem(classified);
         setActivePreparationSteps(steps);
+        setIsSubmittingPoints(false);
+        setPointsSubmissionError(null);
+        setPointsSubmissionSuccess(null);
         setIsChecklistOpen(true);
-        setScanStatusText(`ĐÃ NHẬN DIỆN: ${classified.itemName.toUpperCase()} • CHỜ THỰC HIỆN CÁC BƯỚC`);
+        setScanStatusText(`AI ĐÃ NHẬN DIỆN: ${classified.itemName.toUpperCase()} • CHỜ HỌC SINH XÁC NHẬN`);
       } else {
         playWarningSound();
         const msg = result.error || 'Dữ liệu phân loại không hợp lệ hoặc không xác định được loại rác. Không cộng điểm.';
@@ -760,27 +826,27 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
         </div>
       </div>
 
-      {/* Anti-Cheat Sensor & Bin Deposit Confirmation Banner */}
+      {/* Student Self-Declaration Notice */}
       {waitingForBinDeposit && (
         <div
           id="bin-deposit-alert-banner"
-          className="p-3.5 rounded-2xl bg-amber-950/70 border-2 border-amber-500/60 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-amber-950/30 animate-in fade-in duration-300"
+          className="p-3.5 rounded-2xl bg-slate-900/90 border-2 border-emerald-500/60 flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-emerald-950/30 animate-in fade-in duration-300"
         >
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 flex-shrink-0">
-              <Trash2 className="w-5 h-5 animate-bounce" />
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 flex-shrink-0">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-black uppercase text-amber-200 tracking-tight">
-                  CẢM BIẾN CHỜ BỎ RÁC VÀO THÙNG
+                <span className="text-xs font-black uppercase text-emerald-200 tracking-tight">
+                  XÁC NHẬN TỰ KHAI CỦA HỌC SINH
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/30 border border-amber-400/40 text-amber-300 font-bold font-mono">
-                  KHÓA QUÉT LẶP
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/30 border border-emerald-400/40 text-emerald-300 font-bold font-mono">
+                  ĐÃ BỎ THÙNG
                 </span>
               </div>
               <p className="text-xs text-slate-300">
-                Vừa quét: <strong className="text-amber-300 font-semibold">{previousItemName || 'Món rác'}</strong>. Không thể quét lại cùng món này để lấy điểm.
+                Đã xử lý & bỏ rác: <strong className="text-emerald-300 font-semibold">{previousItemName || 'Món rác'}</strong>. Khóa chống quét lặp lại cùng món rác.
               </p>
             </div>
           </div>
@@ -791,10 +857,10 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
               playClickSound();
               handleConfirmBinDrop();
             }}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs shadow-xl shadow-emerald-500/30 ring-4 ring-emerald-400/40 animate-pulse hover:animate-none hover:scale-105 active:scale-95 transition-all cursor-pointer"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs shadow-xl shadow-emerald-500/30 ring-4 ring-emerald-400/40 hover:scale-105 active:scale-95 transition-all cursor-pointer"
           >
             <CheckCircle2 className="w-4 h-4 text-slate-950" />
-            <span>Xác Nhận Đã Bỏ Thùng</span>
+            <span>Sẵn Sàng Quét Mẫu Tiếp Theo</span>
           </button>
         </div>
       )}
@@ -1042,6 +1108,10 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
         onUpdateStepStatus={handleUpdateStepStatus}
         onConfirmComplete={handleConfirmCompletePreparation}
         onCancel={handleCancelPreparation}
+        isSubmitting={isSubmittingPoints}
+        errorMessage={pointsSubmissionError}
+        successMessage={pointsSubmissionSuccess}
+        onRetry={handleConfirmCompletePreparation}
       />
     </div>
   );
