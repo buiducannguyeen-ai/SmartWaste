@@ -1,16 +1,14 @@
-import app from '../server.ts';
-
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '10mb',
-    },
-  },
-};
-
 export default async function handler(req: any, res: any) {
-  if (req.url && !req.url.startsWith('/api')) {
-    req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
   }
-  return app(req, res);
+
+  return res.status(200).json({
+    status: 'ok',
+    message: 'EcoSort API route handled',
+    path: req.url,
+  });
 }

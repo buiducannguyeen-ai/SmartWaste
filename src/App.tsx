@@ -199,10 +199,11 @@ export default function App() {
     // Initial sync
     refreshLeaderboardOnline();
 
-    // Auto-poll every 3 seconds so all devices see live changes even if SSE disconnected
+    // Gentle auto-poll every 20 seconds as complementary sync (Supabase Realtime handles instant events)
     const pollInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       refreshLeaderboardOnline();
-    }, 3000);
+    }, 20000);
 
     return () => clearInterval(pollInterval);
   }, [refreshLeaderboardOnline]);

@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/api/leaderboard",
+      "destination": "/api/leaderboard/index"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
