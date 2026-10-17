@@ -128,6 +128,8 @@ export interface UserProfile {
   createdAt: number;
   isEmailVerified?: boolean;
   isGoogleVerified?: boolean;
+  sessionToken?: string;
+  role?: 'student' | 'teacher' | 'admin' | 'guest';
 }
 
 export interface LeaderboardEntry {

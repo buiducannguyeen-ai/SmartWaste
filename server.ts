@@ -31,10 +31,24 @@ import {
   getPendingScanSession,
   computeServerImageChecksum,
   findStoredFingerprintByChecksum,
+  type StoredWasteReport,
 } from "./server/store.ts";
-import type { StoredWasteReport, StoredFingerprintRecord } from "./server/store.ts";
 import { moderateWasteReport } from "./server/moderation.ts";
 import { createAndSendPin, verifySubmittedPin } from "./server/emailAuth.ts";
+import {
+  getAdminSecret,
+  authenticateEvaluator,
+  isEvaluatorAuthorized,
+  getVerifiedUserSession,
+  createUserSession,
+  getIdempotencyResult,
+  setIdempotencyResult,
+} from "./server/sessionManager.ts";
+import {
+  computeServerImageFingerprint,
+  computeServerChecksum,
+  getBufferFromBase64,
+} from "./server/serverFingerprint.ts";
 
 dotenv.config();
 
@@ -89,15 +103,47 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-// Daily scan quota status API
+// STEM Lab Evaluator Authentication APIs
+app.post("/api/auth/evaluator-login", (req, res) => {
+  try {
+    const { passkey } = req.body || {};
+    const result = authenticateEvaluator(passkey);
+    if (!result.success) {
+      return res.status(401).json(result);
+    }
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/auth/evaluator-check", (req, res) => {
+  const token = (req.headers["x-benchmark-auth"] as string) || (req.headers.authorization?.replace(/^Bearer /, "") || "");
+  const authorized = isEvaluatorAuthorized(token);
+  return res.json({ authorized });
+});
+
+// User session resolution endpoint
+app.get("/api/auth/session", (req, res) => {
+  const session = getVerifiedUserSession(req);
+  return res.json({
+    success: true,
+    userId: session.userId,
+    isGuest: session.isGuest,
+    role: session.role,
+    name: session.name,
+    token: session.token,
+  });
+});
+
+// Daily scan quota status API (Server-authoritative source of truth)
 app.get("/api/quota/status", (req, res) => {
-  const clientIp = req.ip || req.socket.remoteAddress || "unknown_ip";
-  const rawUserId = (req.query.userId as string) || "";
-  const userId = rawUserId.trim() ? rawUserId.trim() : `guest_${clientIp.replace(/[^a-zA-Z0-9]/g, "_")}`;
-  const quota = getScanQuota(userId);
+  const session = getVerifiedUserSession(req);
+  const quota = getScanQuota(session.userId);
   res.json({
     success: true,
-    userId,
+    userId: session.userId,
+    isGuest: session.isGuest,
     ...quota,
     resetTime: "00:00 (Asia/Ho_Chi_Minh)",
   });
@@ -114,7 +160,6 @@ app.post("/api/classify-waste", async (req, res) => {
       originalItemName,
       fingerprint,
       isBenchmark,
-      userId: rawUserId,
     } = req.body;
 
     if (!image) {
@@ -122,14 +167,27 @@ app.post("/api/classify-waste", async (req, res) => {
     }
 
     const clientIp = req.ip || req.socket.remoteAddress || "unknown_ip";
-    const userId = rawUserId && String(rawUserId).trim() ? String(rawUserId).trim() : `guest_${clientIp.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const userSession = getVerifiedUserSession(req);
+    const userId = userSession.userId;
+
+    // Idempotency check: If this exact request was already processed, return cached response
+    // without double-deducting scan quota
+    const idempotencyKey = (req.headers["x-idempotency-key"] as string) || req.body?.idempotencyKey || "";
+    if (idempotencyKey) {
+      const cached = getIdempotencyResult(idempotencyKey, userId);
+      if (cached) {
+        return res.json(cached);
+      }
+    }
 
     // Verify benchmark mode permission:
-    // Teachers / Jury must provide valid secret (x-benchmark-auth header or body secret)
+    // Teachers / Jury must provide valid token or authenticated session.
+    // Absolutely NO hardcoded fallback secrets like "STEM2026" or "ecosort_admin_2026"!
     const isBenchmarkMode = Boolean(isBenchmark);
-    const benchmarkHeader = (req.headers["x-benchmark-auth"] as string) || "";
-    const benchmarkSecret = process.env.ADMIN_SECRET || "STEM2026";
-    const isBenchmarkAuthorized = isBenchmarkMode && (benchmarkHeader === benchmarkSecret || req.body.benchmarkSecret === benchmarkSecret);
+    const benchmarkToken = (req.headers["x-benchmark-auth"] as string) ||
+      (req.headers.authorization?.replace(/^Bearer /, "") || "") ||
+      req.body.benchmarkSecret;
+    const isBenchmarkAuthorized = isBenchmarkMode && isEvaluatorAuthorized(benchmarkToken);
 
     if (isBenchmarkMode && !isBenchmarkAuthorized) {
       return res.status(403).json({
@@ -170,8 +228,10 @@ app.post("/api/classify-waste", async (req, res) => {
       currentQuota = quotaCheck;
     }
 
-    // 2. Server-side Image Checksum & Anti-Cheat Check (Directly from uploaded image bytes)
-    const serverChecksum = computeServerImageChecksum(base64Data);
+    // 2. Server-side Image Checksum & Anti-Cheat Check directly from image bytes
+    const imageBuffer = getBufferFromBase64(base64Data);
+    const serverChecksum = computeServerChecksum(imageBuffer);
+    const serverFp = computeServerImageFingerprint(base64Data);
 
     if (!isVerificationMode && !isBenchmarkAuthorized) {
       // Check exact duplicate file in server store
@@ -204,29 +264,36 @@ app.post("/api/classify-waste", async (req, res) => {
         });
       }
 
-      // Check client-provided perceptual hash with server-enforced checksum
-      if (fingerprint && typeof fingerprint === "object") {
-        fingerprint.checksum = serverChecksum;
-        const serverDupCheck = evaluateFingerprintServerSide(fingerprint);
-        if (serverDupCheck.isDuplicate) {
-          return res.json({
-            success: false,
-            isDuplicate: true,
-            duplicateCheck: serverDupCheck,
-            error: serverDupCheck.reason || "Phát hiện trùng lặp dữ liệu ảnh trên máy chủ (Anti-cheat).",
-            data: {
-              itemName: serverDupCheck.matchedRecord?.itemName || "Vật thể quét lặp",
-              category: "unknown",
-              points: 0,
-              confidence: 0,
-              isWaste: false,
-              isUncertain: true,
-              uncertaintyReason: serverDupCheck.reason,
-              detectionTier: serverDupCheck.detectionTier,
-            },
-            quota: currentQuota,
-          });
-        }
+      // Check server-computed perceptual hash alongside client-provided metadata
+      const effectiveFp = {
+        checksum: serverChecksum,
+        dHash: serverFp.dHash,
+        centerDHash: serverFp.centerDHash,
+        colorBins: serverFp.colorBins,
+        screenSpoofScore: fingerprint?.screenSpoofScore,
+        isScreenSpoofRisk: fingerprint?.isScreenSpoofRisk,
+        timestamp: Date.now(),
+      };
+
+      const serverDupCheck = evaluateFingerprintServerSide(effectiveFp);
+      if (serverDupCheck.isDuplicate) {
+        return res.json({
+          success: false,
+          isDuplicate: true,
+          duplicateCheck: serverDupCheck,
+          error: serverDupCheck.reason || "Phát hiện trùng lặp dữ liệu ảnh trên máy chủ (Anti-cheat).",
+          data: {
+            itemName: serverDupCheck.matchedRecord?.itemName || "Vật thể quét lặp",
+            category: "unknown",
+            points: 0,
+            confidence: 0,
+            isWaste: false,
+            isUncertain: true,
+            uncertaintyReason: serverDupCheck.reason,
+            detectionTier: serverDupCheck.detectionTier,
+          },
+          quota: currentQuota,
+        });
       }
     }
 
@@ -818,14 +885,38 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
         result.preparationSteps = steps;
       }
 
-      const scanId = "scan-" + Date.now() + "-" + Math.random().toString(36).substring(2, 9);
-      result.scanId = scanId;
+      if (!isBenchmarkAuthorized) {
+        // Register authoritatively in server pendingScans store
+        const pendingSession = createPendingScanSession({
+          userId,
+          userIp: clientIp,
+          itemName: result.itemName,
+          category: result.category,
+          points: result.points,
+          confidence: result.confidence,
+          isWaste: result.isWaste,
+          isUncertain: Boolean(result.isUncertain),
+          isHazardousOrSpecial: Boolean(result.isHazardousOrSpecial),
+          requiresRescanEmpty: Boolean(result.requiresRescanEmpty),
+        });
+        result.scanId = pendingSession.scanId;
+      } else {
+        // Benchmark mode: isolated test session (CANNOT be used to claim student points!)
+        result.scanId = "benchmark-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6);
+      }
 
-      return res.json({
+      const responsePayload = {
         success: true,
         mode: "gemini-ai",
         data: result,
-      });
+        quota: currentQuota,
+      };
+
+      if (idempotencyKey) {
+        setIdempotencyResult(idempotencyKey, userId, responsePayload);
+      }
+
+      return res.json(responsePayload);
     } catch (geminiError: any) {
       console.error("Gemini Vision classification failed strictly:", geminiError?.message);
       // STRICT ANTI-CHEATING: NEVER return random simulated points when AI fails!
@@ -1094,7 +1185,6 @@ app.post("/api/leaderboard/record", (req, res) => {
   try {
     const {
       scanId,
-      userId,
       userName,
       email,
       organization,
@@ -1115,11 +1205,15 @@ app.post("/api/leaderboard/record", (req, res) => {
       });
     }
 
+    // Authenticate and bind user identity to verified session token
+    const userSession = getVerifiedUserSession(req);
+    const verifiedUserId = userSession.userId;
+
     const result = recordClassification({
       scanId,
-      userId,
-      userName,
-      email,
+      userId: verifiedUserId,
+      userName: userSession.name || userName,
+      email: userSession.email || email,
       organization,
       avatar,
       itemName,
@@ -1131,17 +1225,24 @@ app.post("/api/leaderboard/record", (req, res) => {
       specialHandlingNotice,
     });
 
-    // Automatically register fingerprint in persistent server-wide store
-    if (req.body.fingerprint && typeof req.body.fingerprint === 'object') {
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        error: result.error || "Ghi nhận điểm thất bại.",
+      });
+    }
+
+    // Automatically register fingerprint in persistent server-wide store ONLY on genuine verified awards
+    if (result.success && !result.alreadyProcessed && req.body.fingerprint && typeof req.body.fingerprint === 'object') {
       try {
         addStoredFingerprint({
           id: req.body.fingerprint.id || `fp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           scanId,
-          userId,
-          userName,
-          itemName,
+          userId: verifiedUserId,
+          userName: userSession.name || userName,
+          itemName: result.player?.name ? itemName : 'Vật thể hợp lệ',
           category,
-          points: Number(points) || 1,
+          points: result.pointsAwarded || Number(points) || 1,
           timestamp: req.body.fingerprint.timestamp || Date.now(),
           checksum: req.body.fingerprint.checksum || '',
           dHash: req.body.fingerprint.dHash || '',
@@ -1162,8 +1263,8 @@ app.post("/api/leaderboard/record", (req, res) => {
       success: true,
       alreadyProcessed: result.alreadyProcessed || false,
       player: result.player,
-      totalPoints: result.player.totalPoints,
-      correctCount: result.player.correctCount,
+      totalPoints: result.player?.totalPoints || 0,
+      correctCount: result.player?.correctCount || 0,
       leaderboard: result.leaderboard,
     });
   } catch (err: any) {
@@ -1268,14 +1369,56 @@ app.post("/api/auth/send-pin", async (req, res) => {
 // 3.2. Verify submitted PIN
 app.post("/api/auth/verify-pin", (req, res) => {
   try {
-    const { email, pin, purpose } = req.body;
+    const { email, pin, purpose, name, organization, avatar } = req.body;
     const result = verifySubmittedPin({
       email,
       pin,
       purpose,
     });
 
-    return res.status(result.success ? 200 : 400).json(result);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    const cleanEmail = (email || "").trim().toLowerCase();
+    const cleanName = (name || cleanEmail.split("@")[0] || "Thí sinh STEM").trim();
+    const userId = `user-e-${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+
+    const player = upsertPlayer({
+      id: userId,
+      name: cleanName,
+      email: cleanEmail,
+      organization: organization || "CLB STEM Môi Trường",
+      avatar: avatar || "🌱",
+    });
+
+    const userSession = createUserSession({
+      userId: player.id,
+      email: player.email,
+      name: player.name,
+      role: 'student',
+    });
+
+    return res.json({
+      success: true,
+      message: result.message,
+      token: userSession.token,
+      user: {
+        id: player.id,
+        name: player.name,
+        email: player.email,
+        organization: player.organization,
+        avatar: player.avatar,
+        totalPoints: player.totalPoints,
+        correctCount: player.correctCount,
+        organicCount: player.organicCount,
+        recyclableCount: player.recyclableCount,
+        inorganicCount: player.inorganicCount,
+        createdAt: player.createdAt,
+        isEmailVerified: true,
+        sessionToken: userSession.token,
+      },
+    });
   } catch (err: any) {
     console.error("verify-pin route error:", err);
     return res.status(500).json({
@@ -1307,8 +1450,16 @@ app.post("/api/auth/google-login", async (req, res) => {
       totalPoints: 0,
     });
 
+    const userSession = createUserSession({
+      userId: player.id,
+      email: player.email,
+      name: player.name,
+      role: 'student',
+    });
+
     return res.json({
       success: true,
+      token: userSession.token,
       user: {
         id: player.id,
         name: player.name,
@@ -1322,6 +1473,7 @@ app.post("/api/auth/google-login", async (req, res) => {
         inorganicCount: player.inorganicCount,
         createdAt: Date.now(),
         isGoogleVerified: true,
+        sessionToken: userSession.token,
       },
     });
   } catch (err: any) {
@@ -1333,8 +1485,8 @@ app.post("/api/auth/google-login", async (req, res) => {
 // 3b. Reset all players points to 0 (Administrator / Competition reset)
 app.post("/api/players/reset-all-points", async (req, res) => {
   try {
-    const adminKey = (req.body?.adminKey || req.headers['x-admin-key'] || req.query.adminKey) as string;
-    const isAdmin = Boolean(adminKey && (adminKey === process.env.ADMIN_SECRET || adminKey === 'ecosort_admin_2026'));
+    const adminKey = (req.body?.adminKey || req.headers['x-admin-key'] || req.query.adminKey || req.headers['x-benchmark-auth'] || req.headers.authorization?.replace(/^Bearer /, "")) as string;
+    const isAdmin = isEvaluatorAuthorized(adminKey);
     if (!isAdmin) {
       return res.status(403).json({
         success: false,
@@ -1548,11 +1700,12 @@ app.post("/api/waste-reports/:id/upvote", (req, res) => {
 app.post("/api/waste-reports/:id/status", (req, res) => {
   try {
     const { id } = req.params;
-    const { status, resolutionNote, requesterId, adminKey } = req.body || {};
+    const { status, resolutionNote, requesterId } = req.body || {};
     if (!['reported', 'investigating', 'resolved'].includes(status)) {
       return res.status(400).json({ success: false, error: "Trạng thái không hợp lệ" });
     }
-    const isAdmin = Boolean(adminKey && (adminKey === process.env.ADMIN_SECRET || adminKey === 'ecosort_admin_2026'));
+    const adminKey = (req.body?.adminKey || req.headers['x-admin-key'] || req.query.adminKey || req.headers['x-benchmark-auth'] || req.headers.authorization?.replace(/^Bearer /, "")) as string;
+    const isAdmin = isEvaluatorAuthorized(adminKey);
     const result = updateWasteReportStatus(id, status, resolutionNote, requesterId, isAdmin);
     if (!result.success) {
       return res.status(result.notFound ? 404 : 403).json({
@@ -1571,8 +1724,8 @@ app.delete("/api/waste-reports/:id", (req, res) => {
   try {
     const { id } = req.params;
     const requesterId = (req.body?.requesterId || req.query.requesterId || req.headers['x-requester-id']) as string;
-    const adminKey = (req.body?.adminKey || req.query.adminKey || req.headers['x-admin-key']) as string;
-    const isAdmin = Boolean(adminKey && (adminKey === process.env.ADMIN_SECRET || adminKey === 'ecosort_admin_2026'));
+    const adminKey = (req.body?.adminKey || req.query.adminKey || req.headers['x-admin-key'] || req.headers['x-benchmark-auth'] || req.headers.authorization?.replace(/^Bearer /, "")) as string;
+    const isAdmin = isEvaluatorAuthorized(adminKey);
 
     const result = deleteWasteReport(id, requesterId, isAdmin);
     if (!result.success) {
@@ -1593,8 +1746,8 @@ app.delete("/api/waste-reports/:id", (req, res) => {
 // 6. Clear all waste reports (admin only)
 app.post("/api/waste-reports/clear-all", (req, res) => {
   try {
-    const adminKey = (req.body?.adminKey || req.headers['x-admin-key'] || req.query.adminKey) as string;
-    const isAdmin = Boolean(adminKey && (adminKey === process.env.ADMIN_SECRET || adminKey === 'ecosort_admin_2026'));
+    const adminKey = (req.body?.adminKey || req.headers['x-admin-key'] || req.query.adminKey || req.headers['x-benchmark-auth'] || req.headers.authorization?.replace(/^Bearer /, "")) as string;
+    const isAdmin = isEvaluatorAuthorized(adminKey);
     if (!isAdmin) {
       return res.status(403).json({
         success: false,

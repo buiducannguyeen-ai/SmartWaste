@@ -1,5 +1,5 @@
 import React from 'react';
-import { Leaf, Cpu, Volume2, VolumeX, Maximize2, Minimize2, BookOpen, LogOut, User, Award, Presentation, AlertOctagon, Sparkles, FlaskConical } from 'lucide-react';
+import { Leaf, Cpu, Volume2, VolumeX, Maximize2, Minimize2, BookOpen, LogOut, User, Award, Presentation, AlertOctagon, Sparkles, FlaskConical, Database } from 'lucide-react';
 import { UserProfile } from '../types';
 import { playClickSound } from '../utils/audio';
 
@@ -10,6 +10,7 @@ interface NavbarProps {
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
   onOpenGuide: () => void;
+  onOpenSqlModal?: () => void;
   onSwitchUser: () => void;
   recentPointChange?: number | null;
   activeTab?: 'sorting' | 'reports' | 'benchmark';
@@ -24,6 +25,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   isFullscreen,
   onToggleFullscreen,
   onOpenGuide,
+  onOpenSqlModal,
   onSwitchUser,
   recentPointChange,
   activeTab = 'sorting',
@@ -227,6 +229,22 @@ export const Navbar: React.FC<NavbarProps> = ({
             <BookOpen className="w-4 h-4 text-emerald-400 animate-pulse" />
             <span className="hidden lg:inline">Cẩm Nang</span>
           </button>
+
+          {/* Supabase Database & SQL Settings Modal */}
+          {onOpenSqlModal && (
+            <button
+              id="btn-open-supabase-sql"
+              onClick={() => {
+                playClickSound();
+                onOpenSqlModal();
+              }}
+              title="Cơ sở dữ liệu Supabase & SQL Schema"
+              className="flex items-center gap-1.5 px-3 py-1.5 sm:py-2 rounded-xl text-xs font-extrabold bg-slate-900/90 hover:bg-cyan-950/60 text-cyan-300 hover:text-cyan-200 border-2 border-cyan-500/40 hover:border-cyan-400 shadow-md shadow-cyan-950/40 hover:shadow-cyan-500/20 active:scale-95 transition-all whitespace-nowrap"
+            >
+              <Database className="w-4 h-4 text-cyan-400" />
+              <span className="hidden xl:inline">Supabase DB</span>
+            </button>
+          )}
 
           {/* Fullscreen for Presentation */}
           <button

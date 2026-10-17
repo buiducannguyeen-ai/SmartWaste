@@ -45,6 +45,7 @@ import {
 import { DEMO_WASTE_ITEMS } from '../data/demoItems';
 import { AntiCheatAuditModal } from './AntiCheatAuditModal';
 import { PreparationChecklistModal } from './PreparationChecklistModal';
+import { getSessionToken } from '../lib/authApi';
 
 interface WebcamScannerProps {
   onClassified: (result: WasteClassificationResult) => void;
@@ -104,33 +105,31 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
   const [lastSimilarity, setLastSimilarity] = useState<number>(0);
   const [duplicateBlockedCount, setDuplicateBlockedCount] = useState(0);
 
-  // Daily Scan Quota & 24h Token Recovery State (Max 30, -1 per scan, +1 every 24h)
-  const [remainingQuota, setRemainingQuota] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('ecosort_remaining_quota');
-      const lastTimeStr = localStorage.getItem('ecosort_quota_last_time');
-      let quota = saved !== null ? parseInt(saved, 10) : 28;
-      let lastTime = lastTimeStr !== null ? parseInt(lastTimeStr, 10) : Date.now();
+  // Daily Scan Quota: Server-authoritative (Single Source of Truth from /api/quota/status)
+  const [remainingQuota, setRemainingQuota] = useState<number>(30);
+  const [quotaLimit, setQuotaLimit] = useState<number>(30);
 
-      const now = Date.now();
-      const hoursPassed = (now - lastTime) / (1000 * 60 * 60);
-      if (hoursPassed >= 24) {
-        const tokensToAdd = Math.floor(hoursPassed / 24);
-        quota = Math.min(30, quota + tokensToAdd);
-        localStorage.setItem('ecosort_quota_last_time', now.toString());
+  // Sync quota from server on mount and when active user changes
+  const refreshQuota = useCallback(async () => {
+    try {
+      const token = getSessionToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/quota/status', { headers });
+      const data = await res.json().catch(() => null);
+      if (data && typeof data.remaining === 'number') {
+        setRemainingQuota(data.remaining);
+        if (typeof data.limit === 'number') setQuotaLimit(data.limit);
       }
-      return Math.max(0, Math.min(30, quota));
     } catch (e) {
-      return 28;
+      console.warn('Notice syncing quota from server:', e);
     }
-  });
+  }, []);
 
-  // Persist quota
   useEffect(() => {
-    try {
-      localStorage.setItem('ecosort_remaining_quota', remainingQuota.toString());
-    } catch (e) {}
-  }, [remainingQuota]);
+    refreshQuota();
+  }, [refreshQuota]);
 
   // Sync master fingerprint registry from central backend on mount
   useEffect(() => {
@@ -451,26 +450,29 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
     playScanSound();
     setLastScannedImage(base64Image);
 
-    // Decrement quota by 1 on actual scan request
-    setRemainingQuota((prev) => {
-      const next = Math.max(0, prev - 1);
-      try {
-        localStorage.setItem('ecosort_remaining_quota', next.toString());
-        localStorage.setItem('ecosort_quota_last_time', Date.now().toString());
-      } catch (e) {}
-      return next;
-    });
+    // Unique idempotency key to prevent double quota deduction on network retry
+    const idempotencyKey = 'scan_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+    const sessionToken = getSessionToken();
 
     try {
+      const reqHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-idempotency-key': idempotencyKey,
+      };
+      if (sessionToken) {
+        reqHeaders['Authorization'] = `Bearer ${sessionToken}`;
+      }
+
       const response = await fetch('/api/classify-waste', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: reqHeaders,
         body: JSON.stringify({
           image: base64Image,
           hint,
           isRescanVerification: isVerifying,
           previousScanId: verificationTarget?.scanId,
           originalItemName: verificationTarget?.itemName,
+          idempotencyKey,
           fingerprint: currentFingerprint ? {
             checksum: currentFingerprint.checksum,
             dHash: currentFingerprint.dHash,
@@ -486,6 +488,22 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
       });
 
       const result = await response.json().catch(() => null);
+
+      // Synchronize server-authoritative remaining quota if provided
+      if (result?.quota && typeof result.quota.remaining === 'number') {
+        setRemainingQuota(result.quota.remaining);
+      }
+
+      if (response.status === 429) {
+        playWarningSound();
+        setRemainingQuota(0);
+        setScanStatusText('HẾT HẠN MỨC QUÉT HÔM NAY (30/30)');
+        setScanErrorMessage(
+          result?.error ||
+          'Bạn đã dùng hết hạn mức 30 lượt quét AI hôm nay. Hạn mức sẽ tự động được làm mới vào lúc 00:00 (giờ Việt Nam).'
+        );
+        return;
+      }
 
       if (!response.ok || !result) {
         playWarningSound();

@@ -161,12 +161,12 @@ const DATA_FILE = path.join(DATA_DIR, 'stem_data.json');
 const SUPABASE_URL = (
   process.env.VITE_SUPABASE_URL ||
   process.env.SUPABASE_URL ||
-  'https://cuxalsutwmzowwhdrjrq.supabase.co'
+  'https://ykmpehvrgmtyhcxnefih.supabase.co'
 ).trim();
 const SUPABASE_ANON_KEY = (
   process.env.VITE_SUPABASE_ANON_KEY ||
   process.env.SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN1eGFsc3V0d216b3d3aGRyanJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk1Mzk4MDQsImV4cCI6MjEwNTExNTgwNH0.NwNnkBZs_aYCV0MWpP2ZGotM5UuM2C9RH4rMVQPLf-M'
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrbXBlaHZyZ210eWhjeG5lZmloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyMDI5NDAsImV4cCI6MjEwNzc3ODk0MH0.cFiebtP5kGYoT32EOmGIGACIAQ8954o3_iAaglQ2npI'
 ).trim();
 
 function getSupabaseServerClient() {
@@ -681,11 +681,12 @@ export function recordClassification(params: {
     };
   }
 
-  // Verify ownership (allow guest claiming if matching guest prefix or session.userId)
-  if (session.userId && session.userId !== uid && !session.userId.startsWith('guest_') && !uid.startsWith('guest_')) {
+  // STRICT USER OWNERSHIP VERIFICATION:
+  // Cannot steal someone else's scan session or use a guest account to claim a registered student's scan.
+  if (session.userId && session.userId !== uid) {
     return {
       success: false,
-      error: 'scanId này thuộc về tài khoản học sinh khác, không thể nhận điểm thay.',
+      error: 'Lượt quét (scanId) này thuộc về tài khoản hoặc phiên làm việc khác, không thể nhận điểm thay.',
     };
   }
 

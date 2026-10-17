@@ -46,7 +46,13 @@ import {
   exportBenchmarkToJson,
   mapAiResultToBenchmarkCategory,
 } from '../utils/benchmarkStorage';
-import { playClickSound, playPointSound, playVictorySound } from '../utils/audio';
+import { playClickSound, playPointSound, playVictorySound, playWarningSound } from '../utils/audio';
+import {
+  evaluatorLoginApi,
+  checkEvaluatorAuthApi,
+  getEvaluatorToken,
+  clearEvaluatorToken,
+} from '../lib/authApi';
 
 export const AiAccuracyEvaluationView: React.FC = () => {
   const [samples, setSamples] = useState<BenchmarkTestSample[]>(() => loadBenchmarkSamples());
@@ -54,6 +60,48 @@ export const AiAccuracyEvaluationView: React.FC = () => {
   const [isProcessingBatch, setIsProcessingBatch] = useState(false);
   const [processingSampleId, setProcessingSampleId] = useState<string | null>(null);
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
+
+  // Evaluator authentication state (Strict Role & Session Verification)
+  const [isEvaluatorAuthed, setIsEvaluatorAuthed] = useState<boolean>(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [authPasskeyInput, setAuthPasskeyInput] = useState<string>('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isSubmittingAuth, setIsSubmittingAuth] = useState<boolean>(false);
+
+  useEffect(() => {
+    checkEvaluatorAuthApi().then((authed) => {
+      setIsEvaluatorAuthed(authed);
+      setIsCheckingAuth(false);
+    });
+  }, []);
+
+  const handleEvaluatorAuth = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!authPasskeyInput.trim()) {
+      setAuthError('Vui lòng nhập mã bí mật của giám khảo / giáo viên ban tổ chức.');
+      return;
+    }
+    setIsSubmittingAuth(true);
+    setAuthError(null);
+    const res = await evaluatorLoginApi(authPasskeyInput.trim());
+    setIsSubmittingAuth(false);
+    if (res.success) {
+      setIsEvaluatorAuthed(true);
+      setShowAuthModal(false);
+      setAuthPasskeyInput('');
+      playVictorySound();
+    } else {
+      setAuthError(res.error || 'Mã xác thực không chính xác. Vui lòng liên hệ ban tổ chức.');
+      playWarningSound();
+    }
+  };
+
+  const handleLockEvaluator = () => {
+    clearEvaluatorToken();
+    setIsEvaluatorAuthed(false);
+    playClickSound();
+  };
 
   // Modals state
   const [isProtocolModalOpen, setIsProtocolModalOpen] = useState(false);
@@ -123,17 +171,35 @@ export const AiAccuracyEvaluationView: React.FC = () => {
       return;
     }
 
+    const evalToken = getEvaluatorToken();
+    if (!isEvaluatorAuthed || !evalToken) {
+      setShowAuthModal(true);
+      setAuthError('Yêu cầu xác thực quyền Giám Khảo / Giáo Viên trước khi chạy kiểm thử AI.');
+      return;
+    }
+
     setProcessingSampleId(sampleId);
     try {
       const response = await fetch('/api/classify-waste', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-benchmark-auth': evalToken,
+        },
         body: JSON.stringify({
           image: target.image,
           isBenchmark: true, // Bypass anti-cheat duplicate checking & isolate from student points
           originalItemName: target.itemName,
         }),
       });
+
+      if (response.status === 403) {
+        clearEvaluatorToken();
+        setIsEvaluatorAuthed(false);
+        setShowAuthModal(true);
+        setAuthError('Quyền kiểm thử bị từ chối hoặc mã xác thực đã hết hạn. Vui lòng xác thực lại.');
+        return;
+      }
 
       const resData = await response.json();
       if (!resData.success && !resData.data) {
@@ -185,6 +251,13 @@ export const AiAccuracyEvaluationView: React.FC = () => {
 
   // Run batch AI test for all samples with images that haven't been run or need rerun
   const runBatchAiTest = async () => {
+    const evalToken = getEvaluatorToken();
+    if (!isEvaluatorAuthed || !evalToken) {
+      setShowAuthModal(true);
+      setAuthError('Yêu cầu xác thực quyền Giám Khảo / Giáo Viên trước khi chạy kiểm thử hàng loạt.');
+      return;
+    }
+
     const readySamples = samples.filter((s) => s.image && (!s.hasRunAI || s.isUncertain));
     if (readySamples.length === 0) {
       alert('Không có mẫu nào có ảnh đang chờ kiểm thử AI. Hãy chụp hoặc tải ảnh cho các mẫu trước.');
@@ -453,6 +526,34 @@ export const AiAccuracyEvaluationView: React.FC = () => {
               <FileText className="w-3.5 h-3.5" />
               <span>Quy Trình Kiểm Thử</span>
             </button>
+
+            {/* Evaluator Auth Status Badge / Button */}
+            {isEvaluatorAuthed ? (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold shadow-sm">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Giám Khảo Đã Xác Thực</span>
+                <button
+                  type="button"
+                  onClick={handleLockEvaluator}
+                  title="Khóa lại quyền giám khảo"
+                  className="ml-1 text-slate-400 hover:text-rose-400 text-[11px] underline cursor-pointer"
+                >
+                  Khóa
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthError(null);
+                  setShowAuthModal(true);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 shadow-sm active:scale-95 transition-all"
+              >
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span>Xác Thực Giám Khảo</span>
+              </button>
+            )}
 
             <button
               id="btn-export-csv"
@@ -1553,6 +1654,80 @@ export const AiAccuracyEvaluationView: React.FC = () => {
                 Đã Hiểu Quy Trình
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* MODAL 4: EVALUATOR / TEACHER AUTHENTICATION MODAL */}
+      {/* ===================================================================== */}
+      {showAuthModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Lock className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-slate-100">
+                  Xác Thực Quyền Giám Khảo STEM Lab
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAuthModal(false)}
+                className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Chế độ kiểm thử STEM Lab phục vụ hội đồng chấm thi và giáo viên hướng dẫn. Backend yêu cầu xác thực phiên làm việc để đảm bảo học sinh không thể kích hoạt cờ kiểm thử nhằm vượt hạn mức hay bỏ qua chống gian lận.
+            </p>
+
+            <form onSubmit={handleEvaluatorAuth} className="space-y-4 pt-1">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                  Mã Bí Mật Giám Khảo / Admin Secret Key:
+                </label>
+                <input
+                  type="password"
+                  value={authPasskeyInput}
+                  onChange={(e) => setAuthPasskeyInput(e.target.value)}
+                  placeholder="Nhập mã xác thực ban tổ chức..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                  autoFocus
+                />
+              </div>
+
+              {authError && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{authError}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAuthModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-200"
+                >
+                  Hủy Bỏ
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingAuth || !authPasskeyInput.trim()}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 disabled:opacity-50 shadow-md active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  {isSubmittingAuth ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Lock className="w-4 h-4" />
+                  )}
+                  <span>Xác Nhận Quyền Giám Khảo</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

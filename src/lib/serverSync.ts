@@ -26,15 +26,25 @@ export interface RecordResult {
   error?: string;
 }
 
+import { getSessionToken } from './authApi';
+
 /**
  * Record waste classification points on the central server.
  * Instantly broadcasts to all other devices via SSE.
  */
 export async function recordPointsOnServer(payload: RecordWastePayload): Promise<RecordResult> {
   try {
+    const sessionToken = getSessionToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (sessionToken) {
+      headers['Authorization'] = `Bearer ${sessionToken}`;
+    }
+
     const res = await fetch('/api/leaderboard/record', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
 

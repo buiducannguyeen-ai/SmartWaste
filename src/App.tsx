@@ -615,6 +615,7 @@ export default function App() {
         isFullscreen={isFullscreen}
         onToggleFullscreen={handleToggleFullscreen}
         onOpenGuide={() => setIsGuideOpen(true)}
+        onOpenSqlModal={() => setIsSqlModalOpen(true)}
         onSwitchUser={() => setIsLoginModalOpen(true)}
         recentPointChange={recentPointChange}
         activeTab={activeTab}

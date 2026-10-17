@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Database, Copy, Check, X, ShieldCheck, Key, RefreshCw, Terminal, ExternalLink, CheckCircle2, AlertCircle } from 'lucide-react';
-import { isSupabaseConfigured, getEffectiveSupabaseConfig, getSupabase } from '../lib/supabase';
+import { Database, Copy, Check, X, ShieldCheck, Key, RefreshCw, Terminal, ExternalLink, CheckCircle2, AlertCircle, Settings, Save, RotateCcw } from 'lucide-react';
+import { isSupabaseConfigured, getEffectiveSupabaseConfig, getSupabase, updateSupabaseConfig } from '../lib/supabase';
 import { playClickSound } from '../utils/audio';
 
 interface SupabaseSqlModalProps {
@@ -16,7 +16,8 @@ export const SUPABASE_SQL_CODE = `-- ===========================================
 -- 1. Đăng nhập https://supabase.com và tạo một Project mới (hoặc chọn Project của bạn).
 -- 2. Vào menu bên trái chọn "SQL Editor" -> bấm "New Query".
 -- 3. Dán toàn bộ nội dung script này vào và bấm nút "Run" (hoặc Ctrl + Enter).
--- 4. Bảng 'players', 'classification_logs', 'waste_reports' và hàm Stored Procedure
+-- 4. Bảng 'players', 'classification_logs', 'waste_reports', 'scan_quotas', 
+--    'pending_scans', 'image_fingerprints', 'waste_misclassifications' và các hàm RPC
 --    tích điểm đa thiết bị, chống gian lận sẽ được tạo và cấu hình tự động 100%.
 -- ==============================================================================
 
@@ -306,6 +307,136 @@ BEGIN
   END IF;
 END;
 $$;
+
+-- ==============================================================================
+-- 8. BẢNG QUẢN LÝ HẠN MỨC QUÉT NGÀY (public.scan_quotas)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.scan_quotas (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  date_key TEXT NOT NULL, -- Định dạng YYYY-MM-DD theo múi giờ Asia/Ho_Chi_Minh
+  used_scans INTEGER NOT NULL DEFAULT 0 CHECK (used_scans >= 0),
+  remaining_scans INTEGER NOT NULL DEFAULT 30 CHECK (remaining_scans >= 0),
+  last_scan_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_quotas_user_date 
+  ON public.scan_quotas (user_id, date_key);
+
+ALTER TABLE public.scan_quotas ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow quotas all" ON public.scan_quotas;
+CREATE POLICY "Allow quotas all" ON public.scan_quotas FOR ALL USING (true) WITH CHECK (true);
+
+-- ==============================================================================
+-- 9. BẢNG PHIÊN QUÉT CHỜ NGHIỆM THU (public.pending_scans)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.pending_scans (
+  scan_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  item_name TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('organic', 'recyclable', 'inorganic')),
+  points INTEGER NOT NULL DEFAULT 0,
+  confidence NUMERIC(4, 2) DEFAULT 0.95,
+  is_waste BOOLEAN NOT NULL DEFAULT true,
+  is_uncertain BOOLEAN NOT NULL DEFAULT false,
+  is_hazardous_or_special BOOLEAN NOT NULL DEFAULT false,
+  requires_rescan_empty BOOLEAN NOT NULL DEFAULT false,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'expired', 'rejected')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_scans_user 
+  ON public.pending_scans (user_id, status);
+
+ALTER TABLE public.pending_scans ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow pending_scans all" ON public.pending_scans;
+CREATE POLICY "Allow pending_scans all" ON public.pending_scans FOR ALL USING (true) WITH CHECK (true);
+
+-- ==============================================================================
+-- 10. BẢNG DẤU VÂN TAY ẢNH CHỐNG GIAN LẬN (public.image_fingerprints)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.image_fingerprints (
+  id TEXT PRIMARY KEY,
+  scan_id TEXT,
+  user_id TEXT,
+  user_name TEXT,
+  item_name TEXT NOT NULL,
+  category TEXT NOT NULL,
+  points INTEGER NOT NULL DEFAULT 1,
+  checksum TEXT NOT NULL,
+  d_hash TEXT NOT NULL,
+  a_hash TEXT,
+  center_d_hash TEXT,
+  quadrant_hashes TEXT[],
+  color_bins NUMERIC[],
+  thumbnail TEXT,
+  detection_tier TEXT,
+  screen_spoof_score NUMERIC,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_fingerprints_checksum 
+  ON public.image_fingerprints (checksum);
+
+ALTER TABLE public.image_fingerprints ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow image_fingerprints all" ON public.image_fingerprints;
+CREATE POLICY "Allow image_fingerprints all" ON public.image_fingerprints FOR ALL USING (true) WITH CHECK (true);
+
+-- ==============================================================================
+-- 11. BẢNG TIẾP NHẬN PHẢN HỒI NHẬN NHẦM (public.waste_misclassifications)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.waste_misclassifications (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+  user_id TEXT,
+  user_name TEXT,
+  item_name TEXT NOT NULL,
+  ai_category TEXT NOT NULL,
+  ai_confidence NUMERIC,
+  user_suggested_category TEXT NOT NULL,
+  user_note TEXT,
+  thumbnail TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.waste_misclassifications ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow waste_misclassifications all" ON public.waste_misclassifications;
+CREATE POLICY "Allow waste_misclassifications all" ON public.waste_misclassifications FOR ALL USING (true) WITH CHECK (true);
+
+-- ==============================================================================
+-- 12. HÀM RESET TOÀN BỘ ĐIỂM CHO CUỘC THI MỚI (RPC: reset_all_player_points)
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.reset_all_player_points()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_count INT;
+BEGIN
+  UPDATE public.players
+  SET
+    total_points = 0,
+    correct_count = 0,
+    organic_count = 0,
+    recyclable_count = 0,
+    inorganic_count = 0,
+    updated_at = NOW()
+  WHERE id IS NOT NULL;
+
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'message', 'Đã đặt điểm toàn bộ thí sinh về 0 thành công.',
+    'affected_players', v_count
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.reset_all_player_points TO anon, authenticated, service_role;
 `;
 
 export const SupabaseSqlModal: React.FC<SupabaseSqlModalProps> = ({ isOpen, onClose }) => {
@@ -317,11 +448,16 @@ export const SupabaseSqlModal: React.FC<SupabaseSqlModalProps> = ({ isOpen, onCl
   });
 
   const isConfigured = isSupabaseConfigured();
-  const { url: currentUrl } = getEffectiveSupabaseConfig();
+  const { url: currentUrl, anonKey: currentAnonKey } = getEffectiveSupabaseConfig();
+
+  const [inputUrl, setInputUrl] = useState(currentUrl || '');
+  const [inputAnonKey, setInputAnonKey] = useState(currentAnonKey || '');
+  const [showConfigInputs, setShowConfigInputs] = useState(false);
+  const [savedSuccess, setSavedSuccess] = useState(false);
 
   if (!isOpen) return null;
 
-  const projectRefMatch = currentUrl ? currentUrl.match(/https:\/\/([a-z0-9-]+)\.supabase\.co/i) : null;
+  const projectRefMatch = (inputUrl || currentUrl) ? (inputUrl || currentUrl).match(/https:\/\/([a-z0-9-]+)\.supabase\.co/i) : null;
   const sqlEditorUrl = projectRefMatch 
     ? `https://supabase.com/dashboard/project/${projectRefMatch[1]}/sql/new` 
     : 'https://supabase.com/dashboard';
@@ -331,6 +467,15 @@ export const SupabaseSqlModal: React.FC<SupabaseSqlModalProps> = ({ isOpen, onCl
     navigator.clipboard.writeText(SUPABASE_SQL_CODE);
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
+  };
+
+  const handleSaveConfig = () => {
+    playClickSound();
+    updateSupabaseConfig(inputUrl.trim(), inputAnonKey.trim());
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 2500);
+    // Auto test after saving
+    handleTestConnection();
   };
 
   const handleTestConnection = async () => {
@@ -441,6 +586,18 @@ export const SupabaseSqlModal: React.FC<SupabaseSqlModalProps> = ({ isOpen, onCl
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                onClick={() => {
+                  playClickSound();
+                  setShowConfigInputs(!showConfigInputs);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600/60 text-slate-200 font-bold text-xs transition-all cursor-pointer active:scale-95"
+              >
+                <Settings className="w-3.5 h-3.5 text-cyan-400" />
+                <span>{showConfigInputs ? 'Ẩn cấu hình URL/Key' : 'Đổi URL & API Key'}</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={handleTestConnection}
                 disabled={testing}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/50 text-cyan-300 font-bold text-xs transition-all cursor-pointer active:scale-95 disabled:opacity-50"
@@ -455,11 +612,83 @@ export const SupabaseSqlModal: React.FC<SupabaseSqlModalProps> = ({ isOpen, onCl
                 rel="noreferrer"
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-950/40 transition-all cursor-pointer"
               >
-                <span>Mở Supabase SQL Editor</span>
+                <span>Mở SQL Editor</span>
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
             </div>
           </div>
+
+          {/* Collapsible Supabase Project Config Form */}
+          {showConfigInputs && (
+            <div className="p-3.5 rounded-xl bg-slate-900/90 border border-cyan-500/30 space-y-3 animate-in fade-in duration-150">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-cyan-300 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Cập nhật Thông tin Supabase Project Mới:</span>
+                </span>
+                {savedSuccess && (
+                  <span className="text-xs font-bold text-emerald-400 flex items-center gap-1">
+                    <Check className="w-3.5 h-3.5" /> Đã lưu thành công!
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                    1. Supabase Project URL (Dạng: <code>https://abcdefghijkl.supabase.co</code>)
+                  </label>
+                  <input
+                    type="url"
+                    value={inputUrl}
+                    onChange={(e) => setInputUrl(e.target.value)}
+                    placeholder="https://xyzabcdef.supabase.co"
+                    className="w-full px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-emerald-300 focus:outline-none focus:border-cyan-400 transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                    2. Supabase Anon Public API Key (Dạng: <code>eyJhbGciOiJIUzI1Ni...</code>)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={inputAnonKey}
+                    onChange={(e) => setInputAnonKey(e.target.value)}
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    className="w-full px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-emerald-300 focus:outline-none focus:border-cyan-400 transition-colors resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    playClickSound();
+                    updateSupabaseConfig('', '');
+                    setInputUrl('');
+                    setInputAnonKey('');
+                    setSavedSuccess(true);
+                    setTimeout(() => setSavedSuccess(false), 2000);
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] text-rose-400 hover:text-rose-300 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Xóa URL & Key (Đặt lại)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSaveConfig}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-md shadow-cyan-950/50 transition-all cursor-pointer active:scale-95"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Lưu & Kiểm tra kết nối</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           {testResult.message && (
             <div
