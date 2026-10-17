@@ -77,6 +77,13 @@ export default function App() {
   const [isMuted, setIsMuted] = useState(getIsMuted);
   const [activeTab, setActiveTab] = useState<'sorting' | 'reports' | 'benchmark'>('sorting');
 
+  useEffect(() => {
+    const isAdmin = currentUser?.name === '\\Admin_test/' || currentUser?.name === 'Admin_test';
+    if (activeTab === 'benchmark' && !isAdmin) {
+      setActiveTab('sorting');
+    }
+  }, [activeTab, currentUser]);
+
   const isSupabaseLive = isSupabaseConfigured();
   const currentUserRef = useRef<UserProfile | null>(currentUser);
   currentUserRef.current = currentUser;
@@ -734,6 +741,7 @@ export default function App() {
               {/* Left: Webcam AI Scanner (7 Columns) */}
               <div className="lg:col-span-7">
                 <WebcamScanner
+                  currentUser={currentUser}
                   onClassified={handleClassified}
                   onConfirmAwardPoints={handleAwardPoints}
                   isProcessing={isProcessing}

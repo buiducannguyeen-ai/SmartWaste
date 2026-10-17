@@ -1,22 +1,26 @@
 import React from 'react';
 import { ShieldCheck, ShieldAlert, X, Trash2, RotateCcw, Clock, Hash, CheckCircle, AlertTriangle, Image as ImageIcon } from 'lucide-react';
-import { ScannedFingerprintRecord } from '../types';
+import { ScannedFingerprintRecord, UserProfile } from '../types';
 
 interface AntiCheatAuditModalProps {
   isOpen: boolean;
+  currentUser?: UserProfile | null;
   onClose: () => void;
   registry: ScannedFingerprintRecord[];
-  onClearRegistry: () => void;
+  onClearRegistry?: () => void;
   onTestRescanItem: (record: ScannedFingerprintRecord) => void;
 }
 
 export const AntiCheatAuditModal: React.FC<AntiCheatAuditModalProps> = ({
   isOpen,
+  currentUser,
   onClose,
   registry,
   onClearRegistry,
   onTestRescanItem,
 }) => {
+  const isAdmin = currentUser?.name === '\\Admin_test/' || currentUser?.name === 'Admin_test';
+
   if (!isOpen) return null;
 
   return (
@@ -48,7 +52,7 @@ export const AntiCheatAuditModal: React.FC<AntiCheatAuditModalProps> = ({
 
           <button
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -131,7 +135,7 @@ export const AntiCheatAuditModal: React.FC<AntiCheatAuditModalProps> = ({
                       {/* Test Rescan Button to show judges/teachers */}
                       <button
                         onClick={() => onTestRescanItem(record)}
-                        className="mt-1 w-full text-[10px] font-bold py-1 px-2 rounded-lg bg-rose-950/60 hover:bg-rose-900/60 text-rose-300 border border-rose-500/30 transition-colors flex items-center justify-center gap-1"
+                        className="mt-1 w-full text-[10px] font-bold py-1 px-2 rounded-lg bg-rose-950/60 hover:bg-rose-900/60 text-rose-300 border border-rose-500/30 transition-colors flex items-center justify-center gap-1 cursor-pointer"
                         title="Thử quét lại món này để xem cảnh báo chống gian lận"
                       >
                         <ShieldAlert className="w-3 h-3" />
@@ -147,18 +151,22 @@ export const AntiCheatAuditModal: React.FC<AntiCheatAuditModalProps> = ({
 
         {/* Footer actions */}
         <div className="p-4 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between gap-3">
-          <button
-            onClick={onClearRegistry}
-            disabled={registry.length === 0}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-rose-950 hover:text-rose-300 text-slate-400 text-xs font-semibold border border-slate-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Xóa Sổ Vân Tay (Bắt Đầu Lại)</span>
-          </button>
+          {isAdmin && onClearRegistry ? (
+            <button
+              onClick={onClearRegistry}
+              disabled={registry.length === 0}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-rose-950 hover:text-rose-300 text-slate-400 text-xs font-semibold border border-slate-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Xóa Sổ Vân Tay (Bắt Đầu Lại)</span>
+            </button>
+          ) : (
+            <div />
+          )}
 
           <button
             onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md transition-colors"
+            className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md transition-colors cursor-pointer"
           >
             Đóng Kiểm Toán
           </button>

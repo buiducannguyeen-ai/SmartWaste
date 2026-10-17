@@ -276,11 +276,13 @@ export function getLeaderboard(): (StoredPlayer & { levelTitle: string })[] {
     return cachedLeaderboardResult;
   }
 
-  const sorted = [...cachedData.players].sort((a, b) => {
-    if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
-    if (b.correctCount !== a.correctCount) return b.correctCount - a.correctCount;
-    return b.lastActive - a.lastActive;
-  });
+  const sorted = [...cachedData.players]
+    .filter((p) => p.name !== '\\Admin_test/' && p.name !== 'Admin_test')
+    .sort((a, b) => {
+      if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+      if (b.correctCount !== a.correctCount) return b.correctCount - a.correctCount;
+      return b.lastActive - a.lastActive;
+    });
 
   cachedLeaderboardResult = sorted.map((p) => ({
     ...p,

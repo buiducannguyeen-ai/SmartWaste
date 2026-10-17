@@ -115,8 +115,12 @@ export function loadLeaderboard(currentUser?: UserProfile | null): LeaderboardEn
     list = [...INITIAL_LEADERBOARD];
   }
 
-  // Ensure current user is in or updated in leaderboard
-  if (currentUser) {
+  // Filter out admin account from leaderboard
+  list = list.filter((x) => x.name !== '\\Admin_test/' && x.name !== 'Admin_test');
+
+  // Ensure current user is in or updated in leaderboard (if not admin account)
+  const isAdminUser = currentUser && (currentUser.name === '\\Admin_test/' || currentUser.name === 'Admin_test');
+  if (currentUser && !isAdminUser) {
     const existingIndex = list.findIndex((x) => x.id === currentUser.id);
     const currentEntry: LeaderboardEntry = {
       id: currentUser.id,

@@ -320,7 +320,9 @@ export async function fetchOnlineLeaderboard(currentUserId?: string): Promise<{
       return { entries: [], error: error.message };
     }
 
-    const rows = (data || []) as PlayerRow[];
+    const rows = ((data || []) as PlayerRow[]).filter(
+      (row) => row.username !== '\\Admin_test/' && row.username !== 'Admin_test'
+    );
     // Strictly sort by total_points DESC, then correct_count DESC, then updated_at DESC
     rows.sort((a, b) => {
       const ptsA = Number(a.total_points) || 0;

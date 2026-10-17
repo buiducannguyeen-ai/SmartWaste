@@ -159,6 +159,8 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
     }
   };
 
+  const isAdmin = currentUser?.name === '\\Admin_test/' || currentUser?.name === 'Admin_test';
+
   return (
     <div
       id="leaderboard-container"
@@ -198,7 +200,7 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
               <span>{currentUser ? 'Hồ Sơ' : 'Đăng Ký'}</span>
             </button>
 
-            {onOpenSqlGuide && (
+            {onOpenSqlGuide && isAdmin && (
               <button
                 onClick={() => {
                   playClickSound();

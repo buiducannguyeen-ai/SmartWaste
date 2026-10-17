@@ -29,6 +29,7 @@ import {
   ScannedFingerprintRecord,
   PreparationStep,
   PreparationStepStatus,
+  UserProfile,
 } from '../types';
 import { playScanSound, playPointSound, playWarningSound, playClickSound, playVictorySound } from '../utils/audio';
 import {
@@ -48,6 +49,7 @@ import { PreparationChecklistModal } from './PreparationChecklistModal';
 import { getSessionToken } from '../lib/authApi';
 
 interface WebcamScannerProps {
+  currentUser?: UserProfile | null;
   onClassified: (result: WasteClassificationResult) => void;
   onConfirmAwardPoints?: (
     result: WasteClassificationResult
@@ -59,6 +61,7 @@ interface WebcamScannerProps {
 }
 
 export const WebcamScanner: React.FC<WebcamScannerProps> = ({
+  currentUser,
   onClassified,
   onConfirmAwardPoints,
   isProcessing,
@@ -66,6 +69,7 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
   onDuplicateDetected,
   onOpenGuide,
 }) => {
+  const isAdmin = currentUser?.name === '\\Admin_test/' || currentUser?.name === 'Admin_test';
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1384,50 +1388,52 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
       </div>
 
       {/* Quick STEM Test Cases for presentations and evaluation */}
-      <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl flex flex-wrap items-center justify-between gap-2.5 shadow-md">
-        <div className="flex items-center gap-1.5 text-xs text-slate-300 font-bold">
-          <Sparkles className="w-4 h-4 text-amber-400" />
-          <span className="uppercase text-[11px] tracking-wide text-slate-200">Mẫu thử STEM (Test Cases):</span>
+      {isAdmin && (
+        <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl flex flex-wrap items-center justify-between gap-2.5 shadow-md">
+          <div className="flex items-center gap-1.5 text-xs text-slate-300 font-bold">
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            <span className="uppercase text-[11px] tracking-wide text-slate-200">Mẫu thử STEM (Test Cases):</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              id="btn-test-bottle-liquid"
+              onClick={() => handleSelectDemoItem('demo-bottle-liquid')}
+              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-amber-950/80 border border-amber-500/60 text-amber-200 hover:bg-amber-900/90 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+              title="Thử nghiệm chai nhựa còn nước -> Tạm khóa 0 điểm & Bắt buộc quét lại nghiệm thu"
+            >
+              <span>💧 Chai còn nước (Khóa 0đ)</span>
+            </button>
+            <button
+              type="button"
+              id="btn-test-bottle-empty"
+              onClick={() => handleSelectDemoItem('demo-pet-bottle')}
+              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-teal-950/80 border border-teal-500/60 text-teal-200 hover:bg-teal-900/90 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+              title="Thử nghiệm chai nhựa đã rỗng sạch -> Nghiệm thu đạt chuẩn +2 điểm tái chế"
+            >
+              <span>🍶 Chai đã rỗng sạch (+2đ)</span>
+            </button>
+            <button
+              type="button"
+              id="btn-test-banana"
+              onClick={() => handleSelectDemoItem('demo-banana')}
+              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-950/80 border border-emerald-500/60 text-emerald-200 hover:bg-emerald-900/90 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+              title="Thử nghiệm vỏ chuối -> Rác hữu cơ +1đ"
+            >
+              <span>🍌 Vỏ chuối (+1đ)</span>
+            </button>
+            <button
+              type="button"
+              id="btn-test-battery"
+              onClick={() => handleSelectDemoItem('demo-battery')}
+              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-orange-950/80 border border-orange-500/60 text-orange-200 hover:bg-orange-900/90 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+              title="Thử nghiệm pin cũ nguy hại -> Rác vô cơ +3đ"
+            >
+              <span>🔋 Pin cũ (+3đ)</span>
+            </button>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            id="btn-test-bottle-liquid"
-            onClick={() => handleSelectDemoItem('demo-bottle-liquid')}
-            className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-amber-950/80 border border-amber-500/60 text-amber-200 hover:bg-amber-900/90 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
-            title="Thử nghiệm chai nhựa còn nước -> Tạm khóa 0 điểm & Bắt buộc quét lại nghiệm thu"
-          >
-            <span>💧 Chai còn nước (Khóa 0đ)</span>
-          </button>
-          <button
-            type="button"
-            id="btn-test-bottle-empty"
-            onClick={() => handleSelectDemoItem('demo-pet-bottle')}
-            className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-teal-950/80 border border-teal-500/60 text-teal-200 hover:bg-teal-900/90 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
-            title="Thử nghiệm chai nhựa đã rỗng sạch -> Nghiệm thu đạt chuẩn +2 điểm tái chế"
-          >
-            <span>🍶 Chai đã rỗng sạch (+2đ)</span>
-          </button>
-          <button
-            type="button"
-            id="btn-test-banana"
-            onClick={() => handleSelectDemoItem('demo-banana')}
-            className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-950/80 border border-emerald-500/60 text-emerald-200 hover:bg-emerald-900/90 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
-            title="Thử nghiệm vỏ chuối -> Rác hữu cơ +1đ"
-          >
-            <span>🍌 Vỏ chuối (+1đ)</span>
-          </button>
-          <button
-            type="button"
-            id="btn-test-battery"
-            onClick={() => handleSelectDemoItem('demo-battery')}
-            className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-orange-950/80 border border-orange-500/60 text-orange-200 hover:bg-orange-900/90 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
-            title="Thử nghiệm pin cũ nguy hại -> Rác vô cơ +3đ"
-          >
-            <span>🔋 Pin cũ (+3đ)</span>
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* 3 Categories Summary Rule Card */}
       <div className="grid grid-cols-3 gap-2.5">
@@ -1486,6 +1492,7 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
       {/* Anti-Cheat Audit Registry Modal */}
       <AntiCheatAuditModal
         isOpen={isRegistryModalOpen}
+        currentUser={currentUser}
         onClose={() => setIsRegistryModalOpen(false)}
         registry={fingerprintRegistry}
         onClearRegistry={() => {
