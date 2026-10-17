@@ -55,10 +55,15 @@ export const AntiCheatAuditModal: React.FC<AntiCheatAuditModalProps> = ({
         </div>
 
         {/* Explain Rule Callout */}
-        <div className="p-4 bg-emerald-950/40 border-b border-emerald-500/30 text-xs text-emerald-200 flex items-start gap-3">
-          <AlertTriangle className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
-          <div>
-            <strong>Cơ chế bảo vệ chống gian lận đa tầng:</strong> Khi người dùng chụp camera, tải ảnh hoặc chọn mẫu, hệ thống tính toán <em>Mã băm sai phân quang học dHash 64-bit + Checksum tệp ảnh</em>. Bất kỳ ai sử dụng lại ảnh cũ hoặc cùng một chai nhựa/vật thể sẽ bị hệ thống phát hiện & từ chối cộng điểm ngay lập tức (+0 điểm).
+        <div className="p-4 bg-emerald-950/40 border-b border-emerald-500/30 text-xs text-emerald-200 flex flex-col gap-2">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <strong>Cơ chế bảo vệ chống gian lận đa tầng thế hệ mới (Multi-Vector):</strong> Kết hợp <em>dHash quang học chống đổi sáng + Mã băm trọng tâm vật thể + Biểu đồ phân bố màu sắc 64-bin + Bộ lọc Moiré tần số cao</em>. Hệ thống phân biệt rõ ảnh trùng 100%, ảnh chỉnh sửa cắt cúp, vật thể quét lặp lại trong thời gian ngắn và <strong>cho phép phân loại các vật thể khác nhau dù cùng loại</strong> (tránh khóa nhầm chai lọ cùng khuôn mẫu).
+            </div>
+          </div>
+          <div className="text-[11px] text-slate-300/80 bg-slate-950/60 p-2 rounded-xl border border-emerald-500/20 leading-relaxed">
+            <strong className="text-amber-300">Minh bạch giới hạn kỹ thuật STEM:</strong> Thuật toán quang học nâng cao độ khó gian lận lên tối đa. Tuy nhiên, màn hình độ phân giải siêu cao (8K) không lộ viền hoặc bản in bóng sắc nét vẫn có thể giảm độ nhạy phát hiện; do đó các kỳ thi thực tế luôn cần sự đồng hành giám sát trực tiếp từ Ban Giám Khảo.
           </div>
         </div>
 

@@ -358,6 +358,14 @@ export default function App() {
         };
       }
 
+      // STRICT: Never award points if item requires rescan as empty and has not been verified
+      if (result.requiresRescanEmpty && !result.rescanVerified) {
+        return {
+          success: false,
+          error: 'Chai nhựa/ly nước còn chất lỏng. Bắt buộc phải đổ hết nước và quét lại nghiệm thu trước khi nhận điểm.',
+        };
+      }
+
       const scanId =
         result.scanId ||
         'scan-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
@@ -414,6 +422,7 @@ export default function App() {
           source: result.source || 'webcam',
           preparationSteps: result.preparationSteps,
           specialHandlingNotice: result.specialHandlingNotice,
+          fingerprint: result.fingerprintRecord,
         });
 
         if (!serverRes.success) {
@@ -696,13 +705,6 @@ export default function App() {
                   <p className="text-xs sm:text-sm text-slate-300 max-w-2xl mt-1 leading-relaxed">
                     Ứng dụng AI nhận diện rác trực tiếp qua Webcam, lưu trữ và đồng bộ thời gian thực qua <strong className="text-emerald-300">Cơ sở dữ liệu Supabase</strong>. Quy tắc điểm STEM: <span className="text-emerald-400 font-bold">Hữu cơ +1đ</span>, <span className="text-amber-400 font-bold">Tái chế +2đ</span>, <span className="text-orange-400 font-bold">Vô cơ +3đ</span>. Bảng xếp hạng tự động cập nhật từ cao xuống thấp.
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('reports')}
-                    className="mt-3 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-teal-950/80 hover:bg-teal-900/90 border border-teal-500/40 text-teal-300 text-xs font-bold transition-all shadow-sm active:scale-95"
-                  >
-                    <span>📢 Kênh Phản Ánh Tình Trạng Rác Thải (Mới) &rarr;</span>
-                  </button>
                 </div>
 
                 {/* Current Active Contestant Quick Stats Pill */}

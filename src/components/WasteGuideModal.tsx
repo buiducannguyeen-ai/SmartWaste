@@ -101,6 +101,14 @@ export const WasteGuideModal: React.FC<WasteGuideModalProps> = ({ isOpen, onClos
                 <CheckCircle2 className="w-4 h-4 text-amber-400 flex-shrink-0" />
                 <span>Quy trình chuẩn: Rửa sạch nước thừa, làm dẹp gọn gàng và bỏ vào <strong>Thùng Vàng / Trắng</strong> để chuyển nhà máy tái sinh.</span>
               </div>
+              <div className="p-3 rounded-xl bg-amber-950/80 border border-amber-500/50 text-[11px] text-amber-200 space-y-1">
+                <div className="flex items-center gap-1.5 font-black text-amber-300 uppercase">
+                  <span>⚠️ Quy định nghiêm ngặt: Chai / ly còn nước (Khóa 0 điểm & Quét lại)</span>
+                </div>
+                <p className="text-slate-300 leading-relaxed">
+                  Nếu chai hoặc ly nhựa còn nước, đá hay sữa bên trong, hệ thống AI sẽ <strong>tạm khóa 0 điểm</strong>. Học sinh bắt buộc phải mang chai đi <strong>đổ hết nước vào bồn rửa</strong>, sau đó nhấn <strong>&ldquo;Quét lại camera nghiệm thu&rdquo;</strong> để AI kiểm tra chai đã rỗng sạch. Khi đạt chuẩn, hệ thống mới mở khóa <strong>+2 Điểm Rác Tái Chế</strong>.
+                </p>
+              </div>
             </div>
 
             {/* 3. Rác Vô Cơ */}

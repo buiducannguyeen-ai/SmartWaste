@@ -11,6 +11,7 @@ import {
   Info,
   RefreshCw,
   Award,
+  Camera,
 } from 'lucide-react';
 import { WasteClassificationResult, PreparationStep, PreparationStepStatus } from '../types';
 import { playClickSound } from '../utils/audio';
@@ -26,6 +27,7 @@ interface PreparationChecklistModalProps {
   errorMessage?: string | null;
   successMessage?: string | null;
   onRetry?: () => void;
+  onStartRescan?: (item: WasteClassificationResult) => void;
 }
 
 export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps> = ({
@@ -39,6 +41,7 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
   errorMessage = null,
   successMessage = null,
   onRetry,
+  onStartRescan,
 }) => {
   if (!isOpen || !item) return null;
 
@@ -51,8 +54,8 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
   const notApplicableCount = steps.filter((s) => s.status === 'not_applicable').length;
 
   // Strict STEM Points calculation: Hữu cơ = 1, Tái chế = 2, Vô cơ = 3
-  const pointsToAward =
-    item.category === 'organic' ? 1 : item.category === 'recyclable' ? 2 : 3;
+  const isPendingRescan = Boolean(item.requiresRescanEmpty && !item.rescanVerified);
+  const pointsToAward = isPendingRescan ? 0 : item.category === 'organic' ? 1 : item.category === 'recyclable' ? 2 : 3;
 
   const getCategoryDetails = () => {
     switch (item.category) {
@@ -62,18 +65,20 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
           colorBadge: 'bg-emerald-950/80 border-emerald-500 text-emerald-300',
           binBadge: 'bg-emerald-600 text-white',
           binText: 'Thùng Xanh Lá (Ủ phân vi sinh)',
-          pointsText: `+${pointsToAward} Điểm STEM`,
+          pointsText: isPendingRescan ? '0 Điểm (Tạm khóa)' : `+${pointsToAward} Điểm STEM`,
           borderColor: 'border-emerald-500/80',
           gradientBg: 'from-emerald-950/90 via-slate-900 to-slate-950',
         };
       case 'recyclable':
         return {
           title: 'Rác Tái Chế',
-          colorBadge: 'bg-amber-950/80 border-amber-500 text-amber-300',
+          colorBadge: isPendingRescan
+            ? 'bg-amber-950/80 border-amber-400 text-amber-200'
+            : 'bg-amber-950/80 border-amber-500 text-amber-300',
           binBadge: 'bg-amber-500 text-slate-950',
           binText: 'Thùng Vàng / Trắng (Tái sinh nguyên liệu)',
-          pointsText: `+${pointsToAward} Điểm STEM`,
-          borderColor: 'border-amber-500/80',
+          pointsText: isPendingRescan ? '0 Điểm (Chai còn nước)' : `+${pointsToAward} Điểm STEM`,
+          borderColor: isPendingRescan ? 'border-amber-400/90' : 'border-amber-500/80',
           gradientBg: 'from-amber-950/90 via-slate-900 to-slate-950',
         };
       case 'inorganic':
@@ -180,8 +185,20 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
                 <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-slate-800 text-emerald-400 font-mono border border-slate-700">
                   {cat.pointsText}
                 </span>
-                <span className="text-[10px] text-amber-300/90 font-medium bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-500/40">
-                  Chưa cộng điểm (Chờ hoàn tất xử lý)
+                <span
+                  className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${
+                    isPendingRescan
+                      ? 'text-amber-300 bg-amber-950/80 border-amber-500/60 font-black animate-pulse'
+                      : item.rescanVerified
+                      ? 'text-emerald-300 bg-emerald-950/80 border-emerald-500/60 font-black'
+                      : 'text-amber-300/90 bg-amber-950/60 border-amber-500/40'
+                  }`}
+                >
+                  {isPendingRescan
+                    ? 'Chai còn nước (Bắt buộc quét lại)'
+                    : item.rescanVerified
+                    ? 'Đã xác minh chai rỗng'
+                    : 'Chưa cộng điểm (Chờ hoàn tất xử lý)'}
                 </span>
               </div>
             </div>
@@ -197,6 +214,36 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
             </div>
             <ArrowRight className="w-4 h-4 text-slate-400 flex-shrink-0" />
           </div>
+
+          {/* Liquid Warning Notice if bottle contains water */}
+          {isPendingRescan && (
+            <div className="mt-2.5 p-3 rounded-2xl bg-gradient-to-r from-amber-950/95 via-orange-950/90 to-amber-900/90 border-2 border-amber-400 text-amber-200 flex items-start gap-3 text-xs shadow-lg shadow-amber-950/50">
+              <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5 animate-pulse" />
+              <div className="flex-1 min-w-0">
+                <span className="font-black uppercase tracking-wide block text-amber-300">
+                  CHAI CÒN NƯỚC &bull; TẠM KHÓA 0 ĐIỂM &bull; BẮT BUỘC QUÉT LẠI
+                </span>
+                <p className="mt-1 text-slate-200 leading-relaxed font-medium">
+                  {item.liquidStateDescription || 'Hệ thống phát hiện chai/ly còn chứa nước bên trong.'} Để bảo vệ các loại rác tái chế khác không bị ẩm ướt, bạn hãy <strong>đổ hết nước vào bồn rửa</strong>, sau đó nhấn nút <strong>&ldquo;Quét lại camera nghiệm thu&rdquo;</strong> bên dưới để AI xác minh chai rỗng và mở khóa +2 điểm tái chế!
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Rescan Verified Banner */}
+          {item.rescanVerified && (
+            <div className="mt-2.5 p-3 rounded-2xl bg-gradient-to-r from-emerald-950/95 via-teal-950/90 to-emerald-900/90 border-2 border-emerald-400 text-emerald-200 flex items-start gap-3 text-xs shadow-lg shadow-emerald-950/50">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <span className="font-black uppercase tracking-wide block text-emerald-300">
+                  ĐÃ XÁC MINH CHAI RỖNG HOÀN TOÀN &bull; +2 ĐIỂM ĐÃ MỞ KHÓA
+                </span>
+                <p className="mt-1 text-slate-200 leading-relaxed font-medium">
+                  {item.description || 'AI đã xác nhận chai nhựa sạch rỗng, không còn nước. Bạn có thể nhấn xác nhận để cộng điểm vào tài khoản.'}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Safety Special Notice if hazardous */}
           {(item.isHazardousOrSpecial || item.specialHandlingNotice) && (
@@ -433,18 +480,24 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
           {/* Progress / Completion Notice */}
           <div
             className={`p-3 rounded-2xl border text-xs leading-relaxed flex items-center gap-2.5 ${
-              allConfirmed
+              isPendingRescan
+                ? 'bg-amber-950/70 border-amber-500/70 text-amber-200'
+                : allConfirmed
                 ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-200'
                 : 'bg-amber-950/60 border-amber-500/60 text-amber-200'
             }`}
           >
-            {allConfirmed ? (
+            {isPendingRescan ? (
+              <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 animate-bounce" />
+            ) : allConfirmed ? (
               <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
             ) : (
               <Info className="w-5 h-5 text-amber-400 flex-shrink-0" />
             )}
             <span>
-              {allConfirmed
+              {isPendingRescan
+                ? '⚠️ CHAI CÒN CHẤT LỎNG: Hệ thống đang tạm khóa 0 điểm. Hãy trút sạch nước thừa vào bồn rửa, sau đó bấm nút màu cam bên dưới để camera quét lại nghiệm thu chai rỗng (mở khóa +2 điểm).'
+                : allConfirmed
                 ? 'Tuyệt vời! Bạn đã xác nhận đầy đủ các bước. Hãy nhấn nút "Tôi đã xử lý và bỏ rác đúng cách" bên dưới để hệ thống ghi nhận điểm.'
                 : `Còn ${pendingCount} bước ở trạng thái "Chưa thực hiện". Bạn cần xác nhận "Đã thực hiện" hoặc "Không áp dụng" cho mọi bước để mở khóa nút xác nhận.`}
             </span>
@@ -467,42 +520,57 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
             <span>Hủy / Quét lại (+0 đ)</span>
           </button>
 
-          {/* Core confirmation button: Only active after student confirms steps */}
-          <button
-            type="button"
-            id="btn-confirm-processed-waste"
-            disabled={!allConfirmed || isSubmitting || Boolean(successMessage)}
-            onClick={() => {
-              playClickSound();
-              onConfirmComplete();
-            }}
-            className={`flex items-center gap-2 px-6 py-3 rounded-xl font-black text-xs sm:text-sm tracking-wide transition-all shadow-xl cursor-pointer ${
-              successMessage
-                ? 'bg-emerald-500 text-slate-950 cursor-default'
-                : isSubmitting
-                ? 'bg-cyan-600 text-white cursor-wait opacity-80'
-                : allConfirmed
-                ? 'bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 hover:from-emerald-300 hover:to-cyan-300 text-slate-950 shadow-emerald-500/40 ring-4 ring-emerald-400/30 hover:scale-105 active:scale-95 animate-pulse hover:animate-none'
-                : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed opacity-60'
-            }`}
-          >
-            {isSubmitting ? (
-              <>
-                <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
-                <span>Đang ghi nhận điểm...</span>
-              </>
-            ) : successMessage ? (
-              <>
-                <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
-                <span>Đã ghi nhận điểm (+{pointsToAward} Đ)</span>
-              </>
-            ) : (
-              <>
-                <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
-                <span>Tôi đã xử lý và bỏ rác đúng cách (+{pointsToAward} Đ)</span>
-              </>
-            )}
-          </button>
+          {/* Core confirmation or Rescan button */}
+          {isPendingRescan ? (
+            <button
+              type="button"
+              id="btn-start-rescan-empty"
+              onClick={() => {
+                playClickSound();
+                if (onStartRescan) onStartRescan(item);
+              }}
+              className="flex items-center gap-2 px-6 py-3 rounded-xl font-black text-xs sm:text-sm tracking-wide bg-gradient-to-r from-amber-400 via-orange-400 to-amber-500 hover:from-amber-300 hover:to-orange-300 text-slate-950 shadow-xl shadow-amber-500/40 ring-4 ring-amber-400/40 hover:scale-105 active:scale-95 transition-all cursor-pointer animate-pulse hover:animate-none"
+            >
+              <Camera className="w-5 h-5 text-slate-950" />
+              <span>Đã trút hết nước &bull; Quét lại camera nghiệm thu (+2 Đ)</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              id="btn-confirm-processed-waste"
+              disabled={!allConfirmed || isSubmitting || Boolean(successMessage)}
+              onClick={() => {
+                playClickSound();
+                onConfirmComplete();
+              }}
+              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-black text-xs sm:text-sm tracking-wide transition-all shadow-xl cursor-pointer ${
+                successMessage
+                  ? 'bg-emerald-500 text-slate-950 cursor-default'
+                  : isSubmitting
+                  ? 'bg-cyan-600 text-white cursor-wait opacity-80'
+                  : allConfirmed
+                  ? 'bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 hover:from-emerald-300 hover:to-cyan-300 text-slate-950 shadow-emerald-500/40 ring-4 ring-emerald-400/30 hover:scale-105 active:scale-95 animate-pulse hover:animate-none'
+                  : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed opacity-60'
+              }`}
+            >
+              {isSubmitting ? (
+                <>
+                  <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+                  <span>Đang ghi nhận điểm...</span>
+                </>
+              ) : successMessage ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                  <span>Đã ghi nhận điểm (+{pointsToAward} Đ)</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                  <span>Tôi đã xử lý và bỏ rác đúng cách (+{pointsToAward} Đ)</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
     </div>

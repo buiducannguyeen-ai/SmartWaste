@@ -62,21 +62,50 @@ export const DuplicateWarningToast: React.FC<DuplicateWarningToastProps> = ({
                 TỪ CHỐI TÍCH ĐIỂM (+0 ĐIỂM)
               </span>
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-rose-500/30 border border-rose-500/50 text-rose-200 font-bold font-mono">
-                {isExact ? 'TRÙNG LẶP 100%' : isScreenSpoof ? 'GIAN LẬN MÀN HÌNH' : `TRÙNG LẶP ${similarityPercent}%`}
+                {alert.detectionTier === 'screen_spoof' || isScreenSpoof
+                  ? 'GIAN LẬN MÀN HÌNH'
+                  : alert.detectionTier === 'exact_file' || isExact
+                  ? 'TRÙNG LẶP 100%'
+                  : alert.detectionTier === 'modified_image'
+                  ? `ẢNH CẮT CÚP / CHỈNH SÁNG ${similarityPercent}%`
+                  : alert.detectionTier === 'same_physical_object'
+                  ? `TRÙNG VẬT THỂ ${similarityPercent}%`
+                  : `NGHI VẤN ${similarityPercent}%`}
               </span>
             </div>
 
             <h3 className="text-base font-extrabold text-white">
-              {isScreenSpoof
-                ? 'Phát Hiện Chụp Lại Màn Hình / Ảnh 2D'
-                : isExact
+              {alert.detectionTier === 'screen_spoof' || isScreenSpoof
+                ? 'Phát Hiện Chụp Lại Từ Màn Hình Thiết Bị Điện Tử!'
+                : alert.detectionTier === 'exact_file' || isExact
                 ? 'Phát Hiện Sử Dụng Lại Cùng 1 Tệp Ảnh!'
-                : `Phát Hiện Vật Thể "${alert.itemName}" Đã Được Quét Trước Đó!`}
+                : alert.detectionTier === 'modified_image'
+                ? 'Phát Hiện Ảnh Đã Qua Cắt Cúp / Chỉnh Sáng Từ Ảnh Cũ!'
+                : `Phát Hiện Vật Thể "${alert.itemName}" Vừa Được Quét Trước Đó!`}
             </h3>
 
             <p className="text-xs text-rose-100/90 leading-relaxed">
               {alert.reason}
             </p>
+
+            {alert.technicalDetails && (
+              <div className="pt-1 flex items-center gap-2 flex-wrap text-[10px] font-mono text-rose-200/80">
+                <span className="px-1.5 py-0.5 rounded bg-slate-900/80 border border-rose-500/40">
+                  dHash: {Math.round((alert.technicalDetails.dHashSimilarity || 0) * 100)}%
+                </span>
+                <span className="px-1.5 py-0.5 rounded bg-slate-900/80 border border-rose-500/40">
+                  Màu sắc: {Math.round((alert.technicalDetails.colorSimilarity || 0) * 100)}%
+                </span>
+                <span className="px-1.5 py-0.5 rounded bg-slate-900/80 border border-rose-500/40">
+                  Trọng tâm: {Math.round((alert.technicalDetails.centerSimilarity || 0) * 100)}%
+                </span>
+                {alert.technicalDetails.screenSpoofScore > 0 && (
+                  <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-500/50 text-amber-300">
+                    Moiré: {Math.round(alert.technicalDetails.screenSpoofScore * 100)}%
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -159,14 +188,19 @@ export const DuplicateWarningToast: React.FC<DuplicateWarningToastProps> = ({
           </span>
         </div>
 
+        {/* Technical Transparency Note (Requirement 10) */}
+        <div className="mt-2.5 p-2 rounded-xl bg-slate-950/40 border border-slate-800 text-[10px] text-slate-400 leading-relaxed font-sans">
+          <strong className="text-slate-300">Minh bạch thuật toán STEM:</strong> Phòng thủ đa tầng gồm Dấu vân tay quang học, Phổ Moiré tần số cao và Sổ kiểm toán máy chủ. Màn hình OLED góc chụp thẳng không viền hoặc ảnh in chất lượng cao có thể làm giảm độ nhạy quang học; cuộc thi thực tế luôn kết hợp sự giám sát trực tiếp của Ban Giám Khảo.
+        </div>
+
         {/* Action Controls */}
         <div className="mt-4 flex items-center justify-between gap-2 flex-wrap pt-1">
           <button
             onClick={onConfirmDroppedInBin}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition-all"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition-all active:scale-95"
           >
             <CheckCircle2 className="w-4 h-4" />
-            <span>Xác Nhận Đã Bỏ Rác Vào Thùng (Mở Khóa Quét)</span>
+            <span>Mở Khóa Quét Lại (Bỏ Rác Vào Thùng Hoặc Đổi Góc)</span>
           </button>
 
           <div className="flex items-center gap-2">

@@ -14,6 +14,7 @@ export interface RecordWastePayload {
   source?: string;
   preparationSteps?: PreparationStep[];
   specialHandlingNotice?: string;
+  fingerprint?: any;
 }
 
 export interface RecordResult {

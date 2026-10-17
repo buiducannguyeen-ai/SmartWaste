@@ -82,7 +82,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }`}
               >
                 <span>Phản Ánh</span>
-                <span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse" />
               </button>
             </div>
           )}
@@ -123,9 +122,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <AlertOctagon className="w-3.5 h-3.5 text-rose-400" />
               <span>Phản Ánh Ô Nhiễm</span>
-              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-mono shadow-sm">
-                Mới
-              </span>
             </button>
           </div>
         )}

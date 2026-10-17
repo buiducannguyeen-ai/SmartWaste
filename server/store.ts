@@ -85,12 +85,33 @@ export interface StoredMisclassificationFeedback {
   thumbnail?: string;
 }
 
+export interface StoredFingerprintRecord {
+  id: string;
+  scanId?: string;
+  userId?: string;
+  userName?: string;
+  itemName: string;
+  category: 'organic' | 'recyclable' | 'inorganic';
+  points: number;
+  timestamp: number;
+  checksum: string;
+  dHash: string;
+  aHash: string;
+  centerDHash?: string;
+  quadrantHashes?: string[];
+  colorBins?: number[];
+  thumbnail?: string;
+  detectionTier?: 'exact_file' | 'modified_image' | 'same_physical_object' | 'screen_spoof' | 'suspicious';
+  screenSpoofScore?: number;
+}
+
 interface StoreData {
   players: StoredPlayer[];
   history: StoredHistoryItem[];
   reports: StoredWasteReport[];
   misclassifications?: StoredMisclassificationFeedback[];
   processedScanIds?: string[];
+  fingerprints?: StoredFingerprintRecord[];
 }
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -130,6 +151,7 @@ let cachedData: StoreData = {
   reports: [],
   misclassifications: [],
   processedScanIds: [],
+  fingerprints: [],
 };
 
 const processedScanIdsSet = new Set<string>();
@@ -165,6 +187,7 @@ function loadDataFromDisk(): boolean {
           reports: Array.isArray(parsed.reports) ? parsed.reports : [],
           misclassifications: Array.isArray(parsed.misclassifications) ? parsed.misclassifications : [],
           processedScanIds: Array.isArray(parsed.processedScanIds) ? parsed.processedScanIds : [],
+          fingerprints: Array.isArray(parsed.fingerprints) ? parsed.fingerprints : [],
         };
         processedScanIdsSet.clear();
         for (const id of cachedData.processedScanIds || []) {
@@ -290,9 +313,10 @@ export async function resetAllPlayerPoints(): Promise<{
     player.lastActive = Date.now();
   }
 
-  // Clear classification history and processed scan IDs
+  // Clear classification history, processed scan IDs and fingerprint registry
   cachedData.history = [];
   cachedData.processedScanIds = [];
+  cachedData.fingerprints = [];
   processedScanIdsSet.clear();
 
   // Save to local JSON disk
@@ -855,6 +879,163 @@ export function getMisclassificationFeedbacks(): StoredMisclassificationFeedback
   return cachedData.misclassifications || [];
 }
 
+// ==========================================
+// ANTI-CHEAT CROSS-DEVICE FINGERPRINT STORE
+// ==========================================
+
+export function getStoredFingerprints(): StoredFingerprintRecord[] {
+  return cachedData.fingerprints || [];
+}
+
+export function addStoredFingerprint(record: StoredFingerprintRecord): void {
+  if (!cachedData.fingerprints) {
+    cachedData.fingerprints = [];
+  }
+  // Remove existing with same id or identical scanId
+  cachedData.fingerprints = cachedData.fingerprints.filter(
+    (f) => f.id !== record.id && (!record.scanId || f.scanId !== record.scanId)
+  );
+  cachedData.fingerprints.push(record);
+  // Keep last 300 scans for persistent anti-cheat cross-checking
+  if (cachedData.fingerprints.length > 300) {
+    cachedData.fingerprints = cachedData.fingerprints.slice(-300);
+  }
+  saveDataToDisk();
+}
+
+export function clearAllStoredFingerprints(): void {
+  cachedData.fingerprints = [];
+  saveDataToDisk();
+}
+
+export function calculateServerHashSimilarity(hashA?: string, hashB?: string): number {
+  if (!hashA || !hashB || hashA.length === 0 || hashB.length === 0) return 0;
+  const minLen = Math.min(hashA.length, hashB.length);
+  let matches = 0;
+  for (let i = 0; i < minLen; i++) {
+    if (hashA[i] === hashB[i]) matches++;
+  }
+  return matches / minLen;
+}
+
+export function calculateServerHistogramSimilarity(histA?: number[], histB?: number[]): number {
+  if (!histA || !histB || histA.length !== histB.length || histA.length === 0) return 0;
+  let intersection = 0;
+  for (let i = 0; i < histA.length; i++) {
+    intersection += Math.min(histA[i], histB[i]);
+  }
+  return Math.min(1.0, Math.max(0.0, intersection));
+}
+
+export function evaluateFingerprintServerSide(
+  currentFp: {
+    checksum?: string;
+    dHash?: string;
+    centerDHash?: string;
+    quadrantHashes?: string[];
+    colorBins?: number[];
+    screenSpoofScore?: number;
+    isScreenSpoofRisk?: boolean;
+    timestamp?: number;
+  },
+  options?: { cooldownMs?: number }
+) {
+  const registry = getStoredFingerprints();
+
+  // Screen spoof flag check
+  if (currentFp.isScreenSpoofRisk || (currentFp.screenSpoofScore && currentFp.screenSpoofScore >= 0.70)) {
+    return {
+      isDuplicate: true,
+      similarity: currentFp.screenSpoofScore || 0.85,
+      isScreenSpoof: true,
+      detectionTier: 'screen_spoof',
+      reason: 'Phát hiện dấu hiệu chụp lại ảnh từ màn hình thiết bị điện tử hoặc sọc Moiré quang học.',
+      suggestedAction: 'Không đưa màn hình điện thoại hoặc máy tính trước camera. Hãy chụp vật thể rác thật!',
+    };
+  }
+
+  if (!registry || registry.length === 0) {
+    return { isDuplicate: false, similarity: 0 };
+  }
+
+  const now = currentFp.timestamp || Date.now();
+  const cooldownMs = options?.cooldownMs ?? (5 * 60 * 1000);
+
+  for (const record of registry) {
+    const isExactChecksum = Boolean(record.checksum && currentFp.checksum && record.checksum === currentFp.checksum);
+    const dSim = calculateServerHashSimilarity(currentFp.dHash, record.dHash);
+    const centerSim = calculateServerHashSimilarity(currentFp.centerDHash, record.centerDHash || record.dHash);
+    const colorSim = record.colorBins && currentFp.colorBins
+      ? calculateServerHistogramSimilarity(currentFp.colorBins, record.colorBins)
+      : 0.85;
+
+    let quadrantSim = dSim;
+    if (currentFp.quadrantHashes && record.quadrantHashes && record.quadrantHashes.length === 4) {
+      let qMatches = 0;
+      for (let i = 0; i < 4; i++) {
+        qMatches += calculateServerHashSimilarity(currentFp.quadrantHashes[i], record.quadrantHashes[i]);
+      }
+      quadrantSim = qMatches / 4;
+    }
+
+    const timeDiff = Math.max(0, now - record.timestamp);
+
+    // TIER 1: Exact byte or hash match
+    if (isExactChecksum || (dSim >= 0.98 && centerSim >= 0.98 && colorSim >= 0.98)) {
+      return {
+        isDuplicate: true,
+        similarity: 1.0,
+        timeSinceLastScanMs: timeDiff,
+        isExactFileMatch: true,
+        matchedRecord: record,
+        detectionTier: 'exact_file',
+        reason: `Tệp ảnh này trùng khớp hoàn toàn (100%) với mẫu "${record.itemName}" đã từng nhận điểm trên hệ thống.`,
+        suggestedAction: 'Không dùng lại cùng một tệp ảnh để quét nhiều lần. Hãy chụp món rác thật ngoài đời!',
+      };
+    }
+
+    // TIER 2: Modified image (cropped, zoomed, brightness-adjusted)
+    const isModified =
+      (centerSim >= 0.92 && colorSim >= 0.85) ||
+      (dSim >= 0.88 && colorSim >= 0.88) ||
+      (quadrantSim >= 0.90 && colorSim >= 0.86);
+
+    if (isModified) {
+      const sim = Math.round((centerSim * 0.45 + dSim * 0.35 + colorSim * 0.20) * 100);
+      return {
+        isDuplicate: true,
+        similarity: sim / 100,
+        timeSinceLastScanMs: timeDiff,
+        isExactFileMatch: false,
+        matchedRecord: record,
+        detectionTier: 'modified_image',
+        reason: `Phát hiện ảnh đã qua chỉnh sửa (độ sáng, phóng to/cắt cúp) từ mẫu "${record.itemName}" (${sim}% tương đồng).`,
+        suggestedAction: 'Không chỉnh sửa ảnh cũ để gian lận tích điểm. Hãy đưa vật thể rác mới vào khung quét!',
+      };
+    }
+
+    // TIER 3: Same physical object re-scanned within cooldown
+    if (timeDiff < cooldownMs && dSim >= 0.80 && centerSim >= 0.80 && colorSim >= 0.82) {
+      const sim = Math.round((dSim * 0.4 + centerSim * 0.3 + colorSim * 0.3) * 100);
+      const timeStr = timeDiff < 60000 ? `${Math.round(timeDiff / 1000)}s trước` : `${Math.round(timeDiff / 60000)}p trước`;
+      return {
+        isDuplicate: true,
+        similarity: sim / 100,
+        timeSinceLastScanMs: timeDiff,
+        isExactFileMatch: false,
+        matchedRecord: record,
+        detectionTier: 'same_physical_object',
+        reason: `Vật thể này trùng khớp ${sim}% với món "${record.itemName}" vừa được quét và tích điểm (${timeStr}).`,
+        suggestedAction: 'Mỗi món rác chỉ được tích điểm 1 lần duy nhất! Vui lòng bỏ rác vào thùng trước khi quét món mới.',
+      };
+    }
+
+    // TIER 4: Different objects of same category (e.g. 2 different bottles) are ALLOWED!
+  }
+
+  return { isDuplicate: false, similarity: 0 };
+}
+
 // Preload existing Supabase players and reports into memory on startup
 export async function initStore(): Promise<void> {
   loadDataFromDisk();
@@ -862,5 +1043,5 @@ export async function initStore(): Promise<void> {
     syncLeaderboardFromSupabase(),
     syncWasteReportsFromSupabase(),
   ]);
-  console.log(`[EcoSort Store] Initialized with ${cachedData.players.length} players and ${cachedData.reports?.length || 0} waste reports synchronized with Supabase.`);
+  console.log(`[EcoSort Store] Initialized with ${cachedData.players.length} players, ${cachedData.reports?.length || 0} waste reports and ${cachedData.fingerprints?.length || 0} anti-cheat fingerprints.`);
 }

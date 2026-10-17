@@ -20,8 +20,12 @@ import {
   syncLeaderboardFromSupabase,
   addMisclassificationFeedback,
   getMisclassificationFeedbacks,
+  getStoredFingerprints,
+  addStoredFingerprint,
+  clearAllStoredFingerprints,
+  evaluateFingerprintServerSide,
 } from "./server/store.ts";
-import type { StoredWasteReport } from "./server/store.ts";
+import type { StoredWasteReport, StoredFingerprintRecord } from "./server/store.ts";
 import { moderateWasteReport } from "./server/moderation.ts";
 import { createAndSendPin, verifySubmittedPin } from "./server/emailAuth.ts";
 
@@ -81,10 +85,34 @@ app.get("/api/health", (_req, res) => {
 // AI Waste Classification API
 app.post("/api/classify-waste", async (req, res) => {
   try {
-    const { image, hint } = req.body;
+    const { image, hint, isRescanVerification, previousScanId, originalItemName, fingerprint } = req.body;
 
     if (!image) {
       return res.status(400).json({ error: "Thiếu dữ liệu hình ảnh (base64 image required)" });
+    }
+
+    // Server-Side Anti-Cheat Check across ALL devices
+    const isVerificationMode = Boolean(isRescanVerification);
+    if (!isVerificationMode && fingerprint) {
+      const serverDupCheck = evaluateFingerprintServerSide(fingerprint);
+      if (serverDupCheck.isDuplicate) {
+        return res.json({
+          success: false,
+          isDuplicate: true,
+          duplicateCheck: serverDupCheck,
+          error: serverDupCheck.reason || "Phát hiện trùng lặp dữ liệu ảnh trên máy chủ (Anti-cheat).",
+          data: {
+            itemName: serverDupCheck.matchedRecord?.itemName || "Vật thể quét lặp",
+            category: "unknown",
+            points: 0,
+            confidence: 0,
+            isWaste: false,
+            isUncertain: true,
+            uncertaintyReason: serverDupCheck.reason,
+            detectionTier: serverDupCheck.detectionTier,
+          },
+        });
+      }
     }
 
     // Extract raw base64 data and mimeType
@@ -110,7 +138,36 @@ app.post("/api/classify-waste", async (req, res) => {
     }
 
     try {
-      const prompt = `Bạn là chuyên gia AI phân loại rác thông minh cho dự án giáo dục STEM môi trường học đường SmartWaste.
+      const prompt = isVerificationMode
+        ? `Bạn là chuyên gia AI giám định STEM kiểm tra nghiệm thu chai/ly rác tái chế sau khi học sinh đã đi trút nước.
+Vật thể ban đầu trước đó: "${originalItemName || "Chai nhựa / Ly nước"}".
+Nhiệm vụ: Phân tích hình ảnh này thật kỹ và xác định xem vật thể ĐÃ ĐƯỢC ĐỔ RỖNG NƯỚC / CHẤT LỎNG HOÀN TOÀN hay CHƯA.
+
+TIÊU CHÍ NGHIỆM THU:
+1. ĐÃ RỖNG NƯỚC (verificationPassed = true, points = 2):
+   - Chai nhựa/ly nước đã rỗng, không còn nước hoặc chỉ còn vài giọt ẩm dính thành chai không đáng kể.
+   - Thân chai đã được vặn mở nắp dốc nước hoặc đã được ép dẹp phẳng.
+   - Đáp ứng tiêu chuẩn phân loại rác tái chế sạch chuẩn STEM.
+2. VẪN CÒN NƯỚC / CHẤT LỎNG (verificationPassed = false, points = 0):
+   - Bên trong chai/ly vẫn còn nước, nước ngọt, đá viên, sữa hoặc chất lỏng nhìn thấy rõ ràng.
+   - Chưa đổ nước hoặc chưa trút cạn. Chưa đạt tiêu chuẩn bỏ vào thùng rác tái chế.
+
+Yêu cầu trả về JSON chuẩn theo schema:
+- isWaste: true
+- category: "recyclable"
+- itemName: tên ngắn gọn tiếng Việt (ví dụ: "Chai nhựa PET đã đổ rỗng nước")
+- points: 2 nếu verificationPassed = true, 0 nếu verificationPassed = false
+- confidence: số thực từ 0.8 đến 1.0
+- verificationPassed: boolean (true nếu đã trút hết nước, false nếu vẫn còn nước)
+- hasLiquid: boolean (false nếu rỗng, true nếu còn nước)
+- requiresRescanEmpty: boolean (false nếu rỗng, true nếu còn nước)
+- rescanVerified: boolean (true nếu verificationPassed = true)
+- liquidStateDescription: mô tả tình trạng nước trong chai
+- description: giải thích kết quả nghiệm thu
+- binColor: "yellow"
+- recyclingTip: "Bỏ vào Thùng Vàng Tái Chế để đưa về nhà máy sản xuất hạt nhựa tái sinh."
+- verificationMessage: thông điệp thông báo cho học sinh`
+        : `Bạn là chuyên gia AI phân loại rác thông minh cho dự án giáo dục STEM môi trường học đường SmartWaste.
 Hãy phân tích hình ảnh này và thực hiện quy trình nhận diện theo 5 tiêu chí bắt buộc:
 
 TIÊU CHÍ PHÂN TÍCH:
@@ -127,11 +184,11 @@ QUY TẮC PHÂN LOẠI & TÍNH ĐIỂM (ƯU TIÊN VẬT THỂ VÀ TÌNH TRẠNG 
 
 ĐẶC BIỆT CHÚ Ý CÁC VẬT THỂ DỄ NHẦM LẪN:
 1. HỘP SỮA GIẤY NHIỀU LỚP (Tetra Pak): Cấu tạo 6 lớp phức hợp (giấy, nhôm, PE). Thuộc nhóm Tái chế NẾU địa phương/trường học có chương trình thu gom riêng vỏ hộp sữa học đường (yêu cầu mở 4 góc tai, ép dẹp, dốc ráo sữa). Nếu không có thu gom riêng hoặc bị ẩm mốc nặng thì thuộc Rác vô cơ. Bắt buộc ghi chú trong localRuleNote.
-2. LY TRÀ SỮA CÒN NƯỚC: Ly nhựa PP/PET còn đá, nước đường. TUYỆT ĐỐI KHÔNG bỏ nguyên ly còn nước vào thùng. Hướng dẫn học sinh: Đổ cạn nước và đá vào chậu rửa, tách nắp và ống hút riêng, sau đó mới bỏ thân ly vào thùng tái chế.
+2. LY TRÀ SỮA CÒN NƯỚC: Ly nhựa PP/PET còn đá, nước đường. TUYỆT ĐỐI KHÔNG bỏ nguyên ly còn nước vào thùng. Đặt hasLiquid = true, requiresRescanEmpty = true, points = 0. Hướng dẫn học sinh: Đổ cạn nước và đá vào chậu rửa, tách nắp và ống hút riêng, sau đó mới bỏ thân ly vào thùng tái chế.
 3. HỘP THỨC ĂN BẰNG NHỰA BỊ BẨN: Nếu hộp nhựa dính dầu mỡ, nước sốt không thể tráng rửa sạch ngay -> Phải phân loại vào Rác vô cơ (inorganic). Chỉ tái chế khi đã loại bỏ thức ăn thừa và tráng sạch mỡ.
 4. GIẤY DÍNH DẦU (Hộp pizza dính mỡ, giấy gói đồ chiên, khăn giấy dính dầu): TUYỆT ĐỐI KHÔNG BỎ THÙNG TÁI CHẾ. Bắt buộc là Rác vô cơ (inorganic, 3 điểm) vì dầu mỡ thấm sâu vào thớ sợi, không thể hòa tan trong nước khi nghiền bột, sẽ làm hỏng toàn bộ mẻ tái chế giấy.
 5. PIN CŨ & RÁC ĐIỆN TỬ: RÁC NGUY HẠI. Chứa chì, thủy ngân, cadmium. TUYỆT ĐỐI KHÔNG bỏ vào thùng rác sinh hoạt thông thường. Đặt isHazardousOrSpecial = true, phân loại vào Rác vô cơ (3 điểm) kèm cảnh báo an toàn bắt buộc: Gom riêng và chuyển đến hòm thu gom pin chuyên dụng của trường học.
-6. CHAI NHỰA CÓ CHẤT LỎNG: Chai PET còn nước ngọt/nước khoáng. Phải hướng dẫn đổ hết nước thừa, tháo nhãn màng co và vặn ép dẹp trước khi bỏ thùng tái chế.
+6. CHAI NHỰA CÓ CHẤT LỎNG / CÒN NƯỚC: Chai PET còn nước ngọt/nước khoáng/nước lọc bên trong. BẮT BUỘC đặt hasLiquid = true, requiresRescanEmpty = true, points = 0. Mô tả chi tiết mức nước trong liquidStateDescription. Hướng dẫn đổ hết nước thừa và quét lại camera nghiệm thu mới được cộng điểm.
 7. BAO BÌ KẾT HỢP GIẤY, NHỰA VÀ KIM LOẠI (Gói mì tôm, túi bánh snack tráng bạc, màng nhôm phức hợp): Khó phân tách trong điều kiện thông thường -> Phân loại vào Rác vô cơ (inorganic, 3 điểm).
 
 QUY TẮC CẦN NHỚ:
@@ -145,8 +202,11 @@ Yêu cầu trả về JSON chuẩn theo schema:
 - isWaste: boolean, true nếu là rác thải, false nếu không phải rác hoặc không nhận diện được.
 - category: "organic", "recyclable", "inorganic", hoặc "unknown" (nếu isWaste=false).
 - itemName: tên ngắn gọn tiếng Việt của món rác trong ảnh.
-- points: 1 nếu là organic, 2 nếu là recyclable, 3 nếu là inorganic, 0 nếu không phải rác hoặc chưa chắc chắn.
+- points: 1 nếu là organic, 2 nếu là recyclable (khi rỗng sạch), 3 nếu là inorganic, 0 nếu còn nước/chưa chắc chắn.
 - confidence: số thực từ 0.0 đến 1.0 biểu thị trung thực độ tin cậy của AI.
+- hasLiquid: boolean, true nếu chai/ly/hộp còn chứa nước, đá, sữa hoặc chất lỏng bên trong.
+- requiresRescanEmpty: boolean, true nếu là rác tái chế còn chất lỏng, bắt buộc đổ nước và quét lại.
+- liquidStateDescription: mô tả tình trạng chất lỏng trong chai/ly.
 - isUncertain: boolean, true nếu AI chưa chắc chắn hoặc thiếu thông tin để phân loại chính xác.
 - uncertaintyReason: lý do chưa chắc chắn và yêu cầu người dùng chụp lại hoặc cung cấp thêm chi tiết.
 - preparationSteps: mảng tối đa 2 bước xử lý cụ thể trước khi bỏ rác (id, instruction, reason, isSafetyWarning).
@@ -211,6 +271,30 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
                   confidence: {
                     type: Type.NUMBER,
                     description: "Độ tin cậy ước lượng từ 0.0 đến 1.0 (trung thực với độ chắc chắn)",
+                  },
+                  hasLiquid: {
+                    type: Type.BOOLEAN,
+                    description: "True nếu chai nhựa, ly nước, lon còn chứa nước, đá, sữa hoặc chất lỏng bên trong",
+                  },
+                  liquidStateDescription: {
+                    type: Type.STRING,
+                    description: "Mô tả lượng chất lỏng trong chai hoặc ly (ví dụ: 'Còn khoảng 1/2 nước ngọt' hoặc 'Chai rỗng sạch')",
+                  },
+                  requiresRescanEmpty: {
+                    type: Type.BOOLEAN,
+                    description: "True nếu là rác tái chế còn chất lỏng, bắt buộc đổ nước và quét lại",
+                  },
+                  verificationPassed: {
+                    type: Type.BOOLEAN,
+                    description: "True nếu kiểm tra nghiệm thu chai đã sạch rỗng hoàn toàn không còn nước",
+                  },
+                  rescanVerified: {
+                    type: Type.BOOLEAN,
+                    description: "True nếu đã được nghiệm thu chai rỗng",
+                  },
+                  verificationMessage: {
+                    type: Type.STRING,
+                    description: "Thông điệp nghiệm thu kết quả kiểm tra chai rỗng",
                   },
                   isUncertain: {
                     type: Type.BOOLEAN,
@@ -380,10 +464,46 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
         });
       }
 
+      // Special mode: Verification of empty bottle
+      if (isVerificationMode) {
+        const passed = Boolean(result.verificationPassed || result.rescanVerified || (!result.hasLiquid && result.points > 0));
+        result.isWaste = true;
+        result.category = "recyclable";
+        result.binColor = "yellow";
+        result.itemName = result.itemName || (originalItemName ? originalItemName.replace(/còn.*nước/i, "đã đổ rỗng nước") : "Chai nhựa sạch rỗng");
+        result.rescanVerified = passed;
+        result.verificationPassed = passed;
+        result.hasLiquid = !passed;
+        result.requiresRescanEmpty = !passed;
+        result.points = passed ? 2 : 0;
+        result.description = passed
+          ? (result.description || "Chai nhựa đã được trút hết nước sạch sẽ và ép gọn gàng.")
+          : (result.description || "Chai vẫn còn đọng nước hoặc chất lỏng bên trong.");
+        result.verificationMessage = passed
+          ? (result.verificationMessage || "Xác minh thành công: Chai nhựa đã sạch rỗng hoàn toàn (+2 Điểm Tái Chế)!")
+          : (result.verificationMessage || "Phát hiện chai vẫn còn đọng nước hoặc chất lỏng bên trong. Vui lòng dốc cạn nước và thử lại!");
+        result.preparationSteps = [
+          {
+            id: "step-1",
+            instruction: passed ? "Đã trút rỗng nước đạt chuẩn sạch" : "Cần dốc cạn nước và ép dẹp thân chai",
+            reason: passed ? "Đạt chuẩn bỏ vào thùng tái chế vàng" : "Chưa đạt tiêu chuẩn tái chế",
+            status: passed ? "completed" : "pending",
+          },
+        ];
+        result.scanId = "scan-verify-" + Date.now() + "-" + Math.random().toString(36).substring(2, 9);
+        return res.json({
+          success: true,
+          mode: "gemini-ai",
+          isRescanVerification: true,
+          data: result,
+        });
+      }
+
       // Ensure points and category align strictly with rules
       // 0. STRICT RULE CHECK FOR OILY PAPER & GREASY PACKAGING:
       // Giấy dính dầu mỡ / Hộp pizza dính mỡ KHÔNG THỂ TÁI CHẾ bột giấy -> Bắt buộc là Rác vô cơ (inorganic, 3 điểm)
       const itemNameLower = (result.itemName || "").toLowerCase();
+      const descLower = ((result.description || "") + " " + (result.recyclingTip || "") + " " + (result.liquidStateDescription || "")).toLowerCase();
       const isOilyPaper =
         (itemNameLower.includes("giấy") || itemNameLower.includes("pizza") || itemNameLower.includes("bìa") || itemNameLower.includes("khăn giấy")) &&
         (itemNameLower.includes("dầu") || itemNameLower.includes("mỡ") || itemNameLower.includes("dính dầu") || itemNameLower.includes("dính mỡ") || itemNameLower.includes("thấm dầu"));
@@ -407,12 +527,38 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
           "Lưu ý an toàn: Pin cũ và chất thải điện tử chứa kim loại nặng nguy hại (chì, thủy ngân). Tuyệt đối không bỏ vào thùng rác thường; chuyển tới điểm thu gom pin chuyên dụng của trường học/khu phố.";
       }
 
+      // 0b. STRICT LIQUID DETECTION: Plastic bottles, drink cups, cans with liquid
+      // Must be emptied and rescanned before receiving points!
+      const isExplicitlyEmpty =
+        result.hasLiquid === false ||
+        /rỗng|đã đổ|đã dốc|hết nước|sạch rỗng|không còn nước|trút sạch/i.test(itemNameLower + " " + descLower);
+
+      const hasLiquidKeywords =
+        /còn nước|chứa nước|nước thừa|còn đá|còn sữa|còn trà sữa|đọng nước|chất lỏng bên trong|nửa chai nước|đầy nước/i.test(itemNameLower + " " + descLower);
+
+      const containsLiquid =
+        !isExplicitlyEmpty &&
+        (result.hasLiquid === true ||
+          result.requiresRescanEmpty === true ||
+          hasLiquidKeywords);
+
+      if (containsLiquid && result.category === "recyclable") {
+        result.hasLiquid = true;
+        result.requiresRescanEmpty = true;
+        result.points = 0; // STRICT: Locked at 0 points until emptied and verified!
+        result.binColor = "yellow";
+        result.liquidStateDescription =
+          result.liquidStateDescription ||
+          "Chai/ly còn chứa nước hoặc chất lỏng bên trong, bắt buộc đổ hết nước và quét lại camera để nhận điểm.";
+      }
+
       // Ensure points and category align strictly with rules
       if (result.category === "organic") {
         result.points = 1;
         result.binColor = "green";
       } else if (result.category === "recyclable") {
-        result.points = 2;
+        // If it requires rescan empty, keep 0 points!
+        result.points = result.requiresRescanEmpty ? 0 : 2;
         result.binColor = "yellow";
       } else if (result.category === "inorganic") {
         result.points = 3;
@@ -431,8 +577,23 @@ ${hint ? `Gợi ý nhận diện từ hệ thống: ${hint}` : ""}`;
       // 1. Preparation steps generation adhering to Prompt 3:
       // - Max 2 steps
       // - Based on real physical state of the object (never blindly mandate washing clean organics)
-      // - Dedicated handling for hazardous, sharps, milk cartons, cups with liquid, oily paper
-      if (isOilyPaper) {
+      // - Dedicated handling for bottles with liquid, hazardous, sharps, milk cartons, cups with liquid, oily paper
+      if (result.requiresRescanEmpty && result.category === "recyclable") {
+        result.preparationSteps = [
+          {
+            id: "step-1",
+            instruction: "Đổ hết nước thừa, đá hoặc thức uống vào bồn rửa (Bắt buộc)",
+            reason: "Nước thừa làm ướt các loại rác tái chế khác và gây hỏng mẻ ép tái chế",
+            status: "pending",
+          },
+          {
+            id: "step-2",
+            instruction: "Dốc ráo nước, vặn nắp và đưa lên camera quét lại nghiệm thu",
+            reason: "AI cần kiểm tra chai đã đổ hết nước để mở khóa cộng 2 điểm tái chế",
+            status: "pending",
+          },
+        ];
+      } else if (isOilyPaper) {
         result.preparationSteps = [
           {
             id: "step-1",
@@ -868,6 +1029,33 @@ app.post("/api/leaderboard/record", (req, res) => {
       specialHandlingNotice,
     });
 
+    // Automatically register fingerprint in persistent server-wide store
+    if (req.body.fingerprint && typeof req.body.fingerprint === 'object') {
+      try {
+        addStoredFingerprint({
+          id: req.body.fingerprint.id || `fp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          scanId,
+          userId,
+          userName,
+          itemName,
+          category,
+          points: Number(points) || 1,
+          timestamp: req.body.fingerprint.timestamp || Date.now(),
+          checksum: req.body.fingerprint.checksum || '',
+          dHash: req.body.fingerprint.dHash || '',
+          aHash: req.body.fingerprint.aHash || '',
+          centerDHash: req.body.fingerprint.centerDHash,
+          quadrantHashes: req.body.fingerprint.quadrantHashes,
+          colorBins: req.body.fingerprint.colorBins,
+          thumbnail: req.body.fingerprint.thumbnail,
+          detectionTier: req.body.fingerprint.detectionTier,
+          screenSpoofScore: req.body.fingerprint.screenSpoofScore,
+        });
+      } catch (fpErr) {
+        console.warn('Notice registering fingerprint on server:', fpErr);
+      }
+    }
+
     return res.json({
       success: true,
       alreadyProcessed: result.alreadyProcessed || false,
@@ -878,6 +1066,46 @@ app.post("/api/leaderboard/record", (req, res) => {
     });
   } catch (err: any) {
     console.error("Lỗi tích điểm đa thiết bị:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Anti-Cheat Server-wide Fingerprint Endpoints
+app.get("/api/anti-cheat/registry", (req, res) => {
+  try {
+    const list = getStoredFingerprints();
+    return res.json({ success: true, registry: list });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/anti-cheat/register", (req, res) => {
+  try {
+    if (!req.body || !req.body.id) {
+      return res.status(400).json({ success: false, error: "Thiếu dữ liệu dấu vân tay ảnh (id required)" });
+    }
+    addStoredFingerprint(req.body);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/anti-cheat/check", (req, res) => {
+  try {
+    const result = evaluateFingerprintServerSide(req.body);
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/anti-cheat/clear", (req, res) => {
+  try {
+    clearAllStoredFingerprints();
+    return res.json({ success: true, message: "Đã xóa toàn bộ sổ kiểm toán vân tay trên máy chủ" });
+  } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });

@@ -188,11 +188,21 @@ export const PointsNotification: React.FC<PointsNotificationProps> = ({
               {/* Points Orb */}
               <div
                 className={`flex-shrink-0 flex flex-col items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-slate-950/90 border ${
-                  isUncertain ? 'border-amber-500/60' : 'border-slate-700/80'
+                  isUncertain || (result.requiresRescanEmpty && !result.rescanVerified)
+                    ? 'border-amber-500/60'
+                    : result.rescanVerified
+                    ? 'border-emerald-400 shadow-emerald-500/30'
+                    : 'border-slate-700/80'
                 } shadow-inner`}
               >
-                <span className="text-[10px] uppercase font-bold text-slate-400">
-                  {isUncertain ? 'TẠM KHÓA' : 'ĐÃ CỘNG'}
+                <span className="text-[9px] uppercase font-bold text-slate-400 text-center px-1">
+                  {isUncertain
+                    ? 'TẠM KHÓA'
+                    : result.requiresRescanEmpty && !result.rescanVerified
+                    ? 'TẠM KHÓA'
+                    : result.rescanVerified
+                    ? 'ĐÃ DUYỆT'
+                    : 'ĐÃ CỘNG'}
                 </span>
                 <span
                   className={`text-2xl sm:text-3xl font-black ${theme.pointColor} tracking-tighter leading-none my-0.5`}
@@ -208,7 +218,7 @@ export const PointsNotification: React.FC<PointsNotificationProps> = ({
                   <span
                     className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md border ${theme.badgeBg}`}
                   >
-                    {theme.tag}
+                    {result.rescanVerified ? 'CHAI RỖNG ĐÃ DUYỆT' : theme.tag}
                   </span>
                   <span className="text-xs text-slate-200 font-bold truncate">
                     {result.itemName}
@@ -232,7 +242,11 @@ export const PointsNotification: React.FC<PointsNotificationProps> = ({
                   <>
                     <div className="mb-2 p-2 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-bold flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                      <span>Chúc mừng bạn đã xử lý và bỏ rác đúng cách! (+{result.points} điểm)</span>
+                      <span>
+                        {result.rescanVerified
+                          ? 'Đã xác minh chai sạch rỗng! +2 Điểm tái chế'
+                          : `Chúc mừng bạn đã xử lý và bỏ rác đúng cách! (+${result.points} điểm)`}
+                      </span>
                     </div>
 
                     <p className="text-xs text-slate-300 leading-relaxed line-clamp-2 mb-2">

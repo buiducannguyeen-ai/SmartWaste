@@ -33,6 +33,7 @@ export interface WasteClassificationResult {
   isScreenOrPhotoSpoof?: boolean;
   spoofReason?: string;
   fingerprintHash?: string;
+  fingerprintRecord?: ScannedFingerprintRecord;
   isUncertain?: boolean;
   uncertaintyReason?: string;
   needsReview?: boolean;
@@ -44,6 +45,11 @@ export interface WasteClassificationResult {
   localRuleNote?: string; // Lưu ý nếu quy định thu gom phụ thuộc vào địa phương
   scanId?: string; // Định danh duy nhất cho mỗi lượt quét
   flowState?: ClassificationFlowState;
+  hasLiquid?: boolean; // True nếu chai/ly/hộp còn chứa nước hoặc chất lỏng
+  requiresRescanEmpty?: boolean; // Bắt buộc trút cạn nước và quét lại camera mới cộng điểm
+  liquidStateDescription?: string; // Mô tả tình trạng chất lỏng trong vật thể
+  isRescanVerification?: boolean; // Cờ đánh dấu lượt quét này là để nghiệm thu chai đã rỗng
+  rescanVerified?: boolean; // True nếu AI đã nghiệm thu chai đã sạch rỗng thành công
 }
 
 export interface MisclassificationFeedbackPayload {
@@ -74,12 +80,22 @@ export interface DuplicateAlertInfo {
   currentThumbnail?: string;
   isExactFileMatch?: boolean;
   isScreenSpoof?: boolean;
+  detectionTier?: 'exact_file' | 'modified_image' | 'same_physical_object' | 'screen_spoof' | 'suspicious';
+  technicalDetails?: {
+    dHashSimilarity: number;
+    colorSimilarity: number;
+    centerSimilarity: number;
+    screenSpoofScore: number;
+  };
 }
 
 export interface ScannedFingerprintRecord {
   id: string;
   dHash: string; // 64-bit difference hash
   aHash: string; // 64-bit average hash
+  centerDHash?: string; // 64-bit center-crop hash (resistant to periphery crop/zoom)
+  quadrantHashes?: string[]; // 4 x 16-bit quadrant hashes for localized edits
+  colorBins?: number[]; // Quantized 64-bin color profile
   checksum: string; // content byte signature
   timestamp: number;
   itemName: string;
@@ -87,6 +103,8 @@ export interface ScannedFingerprintRecord {
   points: number;
   userName?: string;
   thumbnail?: string;
+  detectionTier?: 'exact_file' | 'modified_image' | 'same_physical_object' | 'screen_spoof' | 'suspicious';
+  screenSpoofScore?: number;
 }
 
 
@@ -143,6 +161,9 @@ export interface DemoWasteItem {
   preparationSteps?: PreparationStep[];
   specialHandlingNotice?: string;
   isHazardousOrSpecial?: boolean;
+  hasLiquid?: boolean;
+  requiresRescanEmpty?: boolean;
+  liquidStateDescription?: string;
 }
 
 export type ReportSeverity = 'low' | 'medium' | 'high' | 'urgent';

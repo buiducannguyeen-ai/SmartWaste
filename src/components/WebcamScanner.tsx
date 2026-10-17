@@ -20,6 +20,7 @@ import {
   Video,
   VideoOff,
   CameraOff,
+  Upload,
 } from 'lucide-react';
 import {
   WasteClassificationResult,
@@ -29,7 +30,7 @@ import {
   PreparationStep,
   PreparationStepStatus,
 } from '../types';
-import { playScanSound, playPointSound, playWarningSound, playClickSound } from '../utils/audio';
+import { playScanSound, playPointSound, playWarningSound, playClickSound, playVictorySound } from '../utils/audio';
 import {
   computeImageFingerprint,
   evaluateAgainstRegistry,
@@ -38,8 +39,10 @@ import {
   registerScannedFingerprint,
   clearFingerprintRegistry,
   computeFastChecksum,
+  fetchServerFingerprintRegistry,
   FingerprintResult,
 } from '../utils/imageFingerprint';
+import { DEMO_WASTE_ITEMS } from '../data/demoItems';
 import { AntiCheatAuditModal } from './AntiCheatAuditModal';
 import { PreparationChecklistModal } from './PreparationChecklistModal';
 
@@ -78,6 +81,9 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
   const [scanStatusText, setScanStatusText] = useState('CHỜ KÍCH HOẠT CAMERA');
   const [scanErrorMessage, setScanErrorMessage] = useState<string | null>(null);
 
+  // Rescan Verification State (Nghiệm thu chai rỗng trước khi cộng 2 điểm tái chế)
+  const [rescanVerificationTarget, setRescanVerificationTarget] = useState<WasteClassificationResult | null>(null);
+
   // Anti-Cheat & Duplicate Prevention State (Khóa chống gian lận luôn kích hoạt cố định theo quy chế STEM)
   const antiCheatEnabled = true;
   const [fingerprintRegistry, setFingerprintRegistry] = useState<ScannedFingerprintRecord[]>(() =>
@@ -97,6 +103,47 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
   const [pointsSubmissionSuccess, setPointsSubmissionSuccess] = useState<string | null>(null);
   const [lastSimilarity, setLastSimilarity] = useState<number>(0);
   const [duplicateBlockedCount, setDuplicateBlockedCount] = useState(0);
+
+  // Daily Scan Quota & 24h Token Recovery State (Max 30, -1 per scan, +1 every 24h)
+  const [remainingQuota, setRemainingQuota] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('ecosort_remaining_quota');
+      const lastTimeStr = localStorage.getItem('ecosort_quota_last_time');
+      let quota = saved !== null ? parseInt(saved, 10) : 28;
+      let lastTime = lastTimeStr !== null ? parseInt(lastTimeStr, 10) : Date.now();
+
+      const now = Date.now();
+      const hoursPassed = (now - lastTime) / (1000 * 60 * 60);
+      if (hoursPassed >= 24) {
+        const tokensToAdd = Math.floor(hoursPassed / 24);
+        quota = Math.min(30, quota + tokensToAdd);
+        localStorage.setItem('ecosort_quota_last_time', now.toString());
+      }
+      return Math.max(0, Math.min(30, quota));
+    } catch (e) {
+      return 28;
+    }
+  });
+
+  // Persist quota
+  useEffect(() => {
+    try {
+      localStorage.setItem('ecosort_remaining_quota', remainingQuota.toString());
+    } catch (e) {}
+  }, [remainingQuota]);
+
+  // Sync master fingerprint registry from central backend on mount
+  useEffect(() => {
+    fetchServerFingerprintRegistry()
+      .then((serverReg) => {
+        if (serverReg && serverReg.length > 0) {
+          setFingerprintRegistry(serverReg);
+        }
+      })
+      .catch((err) => {
+        console.warn('Could not sync server fingerprint registry:', err);
+      });
+  }, []);
 
   // Stop video stream & turn off webcam hardware
   const stopCamera = useCallback(() => {
@@ -227,6 +274,13 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
   const handleConfirmCompletePreparation = async () => {
     if (!activePreparationItem || isSubmittingPoints) return;
 
+    if (activePreparationItem.requiresRescanEmpty && !activePreparationItem.rescanVerified) {
+      setPointsSubmissionError(
+        'Chai nhựa vẫn còn chất lỏng. Bạn bắt buộc phải quét lại camera sau khi đã trút sạch nước để nghiệm thu và mở khóa điểm!'
+      );
+      return;
+    }
+
     const scanId =
       activePreparationItem.scanId ||
       'scan-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
@@ -290,10 +344,22 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
     setIsChecklistOpen(false);
     setActivePreparationItem(null);
     setActivePreparationSteps([]);
+    setRescanVerificationTarget(null);
     setIsSubmittingPoints(false);
     setPointsSubmissionError(null);
     setPointsSubmissionSuccess(null);
     setScanStatusText('ĐÃ HỦY: SẴN SÀNG QUÉT MẪU MỚI (+0 ĐIỂM)');
+  };
+
+  // Start rescan verification for bottles/cups that had liquid
+  const handleStartRescan = (item: WasteClassificationResult) => {
+    setIsChecklistOpen(false);
+    setRescanVerificationTarget(item);
+    setScanErrorMessage(null);
+    if (!cameraActive) {
+      startCamera();
+    }
+    setScanStatusText(`📷 ĐƯA CHAI ĐÃ RỖNG VÀO CAMERA ĐỂ NGHIỆM THU (+2 Đ)`);
   };
 
   // Confirm student self-declaration of proper disposal into designated bin
@@ -301,6 +367,7 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
     setWaitingForBinDeposit(false);
     setActivePreparationItem(null);
     setActivePreparationSteps([]);
+    setRescanVerificationTarget(null);
     setPreviousFingerprint(null);
     setLastDemoItemId(null);
     setLastSimilarity(0);
@@ -311,19 +378,22 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
   const handleProcessImage = async (
     base64Image: string,
     hint?: string,
-    scanSource: 'webcam' | 'file_upload' = 'webcam'
+    scanSource: 'webcam' | 'file_upload' = 'webcam',
+    verificationTarget: WasteClassificationResult | null = rescanVerificationTarget
   ) => {
     if (isProcessing) return;
 
+    const isVerifying = Boolean(verificationTarget);
+
     // 1. Anti-cheat duplicate evaluation against the ENTIRE registry of scanned fingerprints
+    // Note: Bypassed when performing rescan verification on the same bottle after pouring water!
     let currentFingerprint: FingerprintResult | null = null;
-    if (antiCheatEnabled) {
+    if (antiCheatEnabled && !isVerifying) {
       currentFingerprint = await computeImageFingerprint(base64Image);
 
       const duplicateCheck = evaluateAgainstRegistry(
         currentFingerprint,
-        fingerprintRegistry,
-        { similarityThreshold: 0.74 }
+        fingerprintRegistry
       );
 
       const simPercent = Math.round(duplicateCheck.similarity * 100);
@@ -350,30 +420,69 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
             : undefined,
           currentThumbnail: currentFingerprint.thumbnail,
           isExactFileMatch: duplicateCheck.isExactFileMatch,
+          isScreenSpoof: duplicateCheck.isScreenSpoof,
+          detectionTier: duplicateCheck.detectionTier,
+          technicalDetails: duplicateCheck.technicalDetails,
         };
         if (onDuplicateDetected) {
           onDuplicateDetected(alertInfo);
         }
-        setScanStatusText(
-          duplicateCheck.isExactFileMatch
-            ? '🚫 GIAN LẬN: TỆP ẢNH ĐÃ TỪNG DÙNG (+0 ĐIỂM)'
-            : `⚠️ GIAN LẬN: TRÙNG MẪU ${simPercent}% (+0 ĐIỂM)`
-        );
+
+        let statusMsg = `⚠️ GIAN LẬN: TRÙNG MẪU ${simPercent}% (+0 ĐIỂM)`;
+        if (duplicateCheck.detectionTier === 'screen_spoof' || duplicateCheck.isScreenSpoof) {
+          statusMsg = '🚫 GIAN LẬN: PHÁT HIỆN ẢNH MÀN HÌNH (+0 ĐIỂM)';
+        } else if (duplicateCheck.detectionTier === 'exact_file' || duplicateCheck.isExactFileMatch) {
+          statusMsg = '🚫 GIAN LẬN: TỆP ẢNH ĐÃ TỪNG DÙNG (100% TRÙNG LẶP)';
+        } else if (duplicateCheck.detectionTier === 'modified_image') {
+          statusMsg = `⚠️ GIAN LẬN: ẢNH ĐÃ QUA CHỈNH SỬA / CẮT CÚP ${simPercent}% (+0 ĐIỂM)`;
+        } else if (duplicateCheck.detectionTier === 'same_physical_object') {
+          statusMsg = `⚠️ TRÙNG VẬT THỂ: ĐÃ QUÉT TRƯỚC ĐÓ (+0 ĐIỂM)`;
+        }
+        setScanStatusText(statusMsg);
         return;
       }
     }
 
     setIsProcessing(true);
-    setScanStatusText('ĐANG PHÂN TÍCH VẬT THỂ AI...');
+    setScanStatusText(
+      isVerifying ? 'AI ĐANG GIÁM ĐỊNH CHAI RỖNG...' : 'ĐANG PHÂN TÍCH VẬT THỂ AI...'
+    );
     setScanErrorMessage(null);
     playScanSound();
     setLastScannedImage(base64Image);
+
+    // Decrement quota by 1 on actual scan request
+    setRemainingQuota((prev) => {
+      const next = Math.max(0, prev - 1);
+      try {
+        localStorage.setItem('ecosort_remaining_quota', next.toString());
+        localStorage.setItem('ecosort_quota_last_time', Date.now().toString());
+      } catch (e) {}
+      return next;
+    });
 
     try {
       const response = await fetch('/api/classify-waste', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64Image, hint }),
+        body: JSON.stringify({
+          image: base64Image,
+          hint,
+          isRescanVerification: isVerifying,
+          previousScanId: verificationTarget?.scanId,
+          originalItemName: verificationTarget?.itemName,
+          fingerprint: currentFingerprint ? {
+            checksum: currentFingerprint.checksum,
+            dHash: currentFingerprint.dHash,
+            aHash: currentFingerprint.aHash,
+            centerDHash: currentFingerprint.centerDHash,
+            quadrantHashes: currentFingerprint.quadrantHashes,
+            colorBins: currentFingerprint.colorHistogram.bins,
+            screenSpoofScore: currentFingerprint.screenSpoof.score,
+            isScreenSpoofRisk: currentFingerprint.screenSpoof.isScreenSpoofRisk,
+            timestamp: currentFingerprint.timestamp,
+          } : undefined,
+        }),
       });
 
       const result = await response.json().catch(() => null);
@@ -385,6 +494,74 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
           `Máy chủ nhận diện phản hồi lỗi (${response.status}). Vui lòng đưa mẫu rác rõ nét vào khung quét và thử lại.`;
         setScanStatusText('LỖI NHẬN DIỆN - KHÔNG CỘNG ĐIỂM');
         setScanErrorMessage(errDesc);
+        return;
+      }
+
+      // Check Verification result if in Rescan Verification Mode
+      if (isVerifying) {
+        if (result.data?.rescanVerified) {
+          playVictorySound();
+          setRescanVerificationTarget(null);
+          setScanErrorMessage(null);
+
+          const verifiedItem: WasteClassificationResult = {
+            ...(verificationTarget as WasteClassificationResult),
+            ...result.data,
+            points: 2,
+            category: 'recyclable',
+            hasLiquid: false,
+            requiresRescanEmpty: false,
+            rescanVerified: true,
+            rawImage: base64Image,
+            flowState: 'ai_recognized',
+          };
+
+          setActivePreparationItem(verifiedItem);
+          setActivePreparationSteps([
+            {
+              id: 'step-1',
+              instruction: 'Đã trút rỗng nước đạt chuẩn sạch (+2 Đ)',
+              reason: 'Chai nhựa sạch rỗng đạt chuẩn nguyên liệu tái sinh bảo vệ môi trường',
+              status: 'completed',
+            },
+          ]);
+          setIsChecklistOpen(true);
+          setScanStatusText('🎉 ĐÃ XÁC MINH CHAI RỖNG HOÀN TOÀN: MỞ KHÓA +2 ĐIỂM TÁI CHẾ!');
+          return;
+        } else {
+          playWarningSound();
+          const failMsg =
+            result.data?.verificationMessage ||
+            'Phát hiện trong chai vẫn còn nước hoặc chất lỏng bên trong. Vui lòng dốc sạch nước vào bồn rửa và bấm quét lại nghiệm thu!';
+          setScanErrorMessage(failMsg);
+          setScanStatusText('⚠️ CHAI VẪN CÒN NƯỚC: CHƯA ĐẠT TIÊU CHUẨN (+0 Đ)');
+          return;
+        }
+      }
+
+      // 0. Anti-Cheat: Check if server detected duplicate or screen spoof across devices
+      if (result.isDuplicate || result.duplicateCheck?.isDuplicate) {
+        playWarningSound();
+        setDuplicateBlockedCount((prev) => prev + 1);
+        const dup = result.duplicateCheck;
+        const alertInfo: DuplicateAlertInfo = {
+          itemName: dup?.matchedRecord?.itemName || result.data?.itemName || 'Vật thể trùng lặp',
+          similarity: dup?.similarity || 0.95,
+          timeSinceLastScanMs: dup?.timeSinceLastScanMs || 0,
+          reason: dup?.reason || result.error || 'Phát hiện trùng lặp dữ liệu ảnh trên máy chủ.',
+          suggestedAction: dup?.suggestedAction || 'Mỗi món rác chỉ được tích điểm 1 lần duy nhất! Hãy quét món rác mới.',
+          matchedRecord: dup?.matchedRecord,
+          currentThumbnail: currentFingerprint?.thumbnail,
+          isExactFileMatch: dup?.isExactFileMatch,
+          isScreenSpoof: dup?.isScreenSpoof,
+          detectionTier: dup?.detectionTier,
+          technicalDetails: dup?.technicalDetails,
+        };
+        if (onDuplicateDetected) {
+          onDuplicateDetected(alertInfo);
+        }
+        setScanStatusText('⚠️ PHÁT HIỆN TRÙNG LẶP TRÊN MÁY CHỦ (+0 ĐIỂM)');
+        setScanErrorMessage(alertInfo.reason);
         return;
       }
 
@@ -449,7 +626,11 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
       }
 
       // 3. Reject non-waste images (selfie, face, pet, clean room, etc.)
-      if (result.isNotWaste || result.data?.isWaste === false || (result.data?.points === 0 && !result.data?.isUncertain)) {
+      if (
+        result.isNotWaste ||
+        result.data?.isWaste === false ||
+        (result.data?.points === 0 && !result.data?.isUncertain && !result.data?.requiresRescanEmpty)
+      ) {
         playWarningSound();
         const msg =
           result.error ||
@@ -483,16 +664,21 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
             id: 'fp-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
             dHash: currentFingerprint.dHash,
             aHash: currentFingerprint.aHash,
+            centerDHash: currentFingerprint.centerDHash,
+            quadrantHashes: currentFingerprint.quadrantHashes,
+            colorBins: currentFingerprint.colorHistogram.bins,
             checksum: currentFingerprint.checksum,
             timestamp: Date.now(),
             itemName: classified.itemName,
             category: classified.category,
             points: classified.points,
             thumbnail: currentFingerprint.thumbnail,
+            screenSpoofScore: currentFingerprint.screenSpoof.score,
           };
           registerScannedFingerprint(newRecord);
           setFingerprintRegistry(loadFingerprintRegistry());
           setPreviousFingerprint(currentFingerprint);
+          classified.fingerprintRecord = newRecord;
         }
         let steps: PreparationStep[] = (classified.preparationSteps || []).map((s: any, idx: number) => ({
           id: s.id || `step-${idx + 1}`,
@@ -563,6 +749,96 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
     }
   };
 
+  // Quick test demo item for live presentations and judge evaluations
+  const handleSelectDemoItem = (demoId: string) => {
+    const item = DEMO_WASTE_ITEMS.find((d) => d.id === demoId);
+    if (!item) return;
+
+    playClickSound();
+
+    // If currently in Rescan Verification Mode:
+    if (rescanVerificationTarget) {
+      if (item.hasLiquid) {
+        // Still has liquid! Verification failed
+        playWarningSound();
+        setScanErrorMessage(
+          'Phát hiện trong chai vẫn còn nước hoặc chất lỏng bên trong. Vui lòng dốc sạch nước vào bồn rửa và bấm quét lại nghiệm thu!'
+        );
+        setScanStatusText('⚠️ CHAI VẪN CÒN NƯỚC: CHƯA ĐẠT TIÊU CHUẨN (+0 Đ)');
+      } else {
+        // Empty bottle scanned! Verification PASSED
+        playVictorySound();
+        const verifiedItem: WasteClassificationResult = {
+          ...rescanVerificationTarget,
+          itemName: rescanVerificationTarget.itemName.replace(/còn.*nước/i, 'đã đổ rỗng nước'),
+          category: 'recyclable',
+          points: 2,
+          hasLiquid: false,
+          requiresRescanEmpty: false,
+          rescanVerified: true,
+          rawImage: item.imageUrl || rescanVerificationTarget.rawImage,
+          flowState: 'ai_recognized',
+          description:
+            'AI đã xác nhận chai nhựa sạch rỗng, không còn nước. Bạn có thể nhấn xác nhận để cộng điểm vào tài khoản.',
+        };
+        setRescanVerificationTarget(null);
+        setScanErrorMessage(null);
+        setActivePreparationItem(verifiedItem);
+        setActivePreparationSteps([
+          {
+            id: 'step-1',
+            instruction: 'Đã trút rỗng nước đạt chuẩn sạch (+2 Đ)',
+            reason: 'Chai nhựa sạch rỗng đạt chuẩn nguyên liệu tái sinh bảo vệ môi trường',
+            status: 'completed',
+          },
+        ]);
+        setIsChecklistOpen(true);
+        setScanStatusText('🎉 ĐÃ XÁC MINH CHAI RỖNG HOÀN TOÀN: MỞ KHÓA +2 ĐIỂM TÁI CHẾ!');
+      }
+      return;
+    }
+
+    // Normal scan mode for demo item:
+    const scanId = 'scan-demo-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+    const resultItem: WasteClassificationResult = {
+      category: item.category,
+      itemName: item.itemName,
+      points: item.requiresRescanEmpty ? 0 : item.points,
+      confidence: item.confidence,
+      description: item.description,
+      binColor: item.binColor,
+      recyclingTip: item.recyclingTip,
+      ecoImpact: item.ecoImpact,
+      rawImage: item.imageUrl,
+      hasLiquid: item.hasLiquid,
+      requiresRescanEmpty: item.requiresRescanEmpty,
+      liquidStateDescription: item.liquidStateDescription,
+      scanId,
+      flowState: 'ai_recognized',
+      preparationSteps: item.preparationSteps,
+    };
+
+    const steps: PreparationStep[] = (item.preparationSteps || []).map((s, idx) => ({
+      id: s.id || `step-${idx + 1}`,
+      instruction: s.instruction,
+      reason: s.reason,
+      isSafetyWarning: s.isSafetyWarning,
+      status: 'pending' as const,
+    }));
+
+    setActivePreparationItem(resultItem);
+    setActivePreparationSteps(steps);
+    setIsSubmittingPoints(false);
+    setPointsSubmissionError(null);
+    setPointsSubmissionSuccess(null);
+    setIsChecklistOpen(true);
+    setScanStatusText(
+      item.requiresRescanEmpty
+        ? `⚠️ CHAI CÒN NƯỚC: TẠM KHÓA 0 ĐIỂM & BẮT BUỘC QUÉT LẠI`
+        : `MẪU STEM: ${item.itemName.toUpperCase()} • CHỜ HỌC SINH XÁC NHẬN`
+    );
+  };
+
   // Trigger capture & classify from live webcam
   const handleCaptureLive = () => {
     if (!cameraActive) {
@@ -571,7 +847,7 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
     }
     const frame = captureFrame();
     if (frame) {
-      handleProcessImage(frame, undefined, 'webcam');
+      handleProcessImage(frame, undefined, 'webcam', rescanVerificationTarget);
     }
   };
 
@@ -605,9 +881,9 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
         const ctx = tempCanvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, w, h);
-          handleProcessImage(tempCanvas.toDataURL('image/jpeg', 0.85), undefined, 'file_upload');
+          handleProcessImage(tempCanvas.toDataURL('image/jpeg', 0.85), undefined, 'file_upload', rescanVerificationTarget);
         } else {
-          handleProcessImage(base64, undefined, 'file_upload');
+          handleProcessImage(base64, undefined, 'file_upload', rescanVerificationTarget);
         }
       };
       img.src = base64;
@@ -640,7 +916,7 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('ecosort:rescan', handleRescanEvent);
     };
-  });
+  }, [cameraActive, handleCaptureLive, startCamera]);
 
   return (
     <div className="w-full space-y-4">
@@ -755,7 +1031,7 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
           {/* Top Status Bar */}
           <div className="flex items-center justify-between pointer-events-auto">
             <div className="flex items-center gap-2 bg-slate-950/85 backdrop-blur-md px-3 py-1 rounded-full border border-slate-700/80 text-[11px] font-mono shadow-md">
-              <span className={`w-2 h-2 rounded-full ${cameraActive ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`} />
+              <span className={`w-2 h-2 rounded-full ${cameraActive ? (rescanVerificationTarget ? 'bg-amber-400 animate-ping' : 'bg-emerald-400 animate-ping') : 'bg-amber-400'}`} />
               <span className="font-bold text-slate-200">{scanStatusText}</span>
             </div>
 
@@ -789,17 +1065,75 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
             </div>
           </div>
 
+          {/* Rescan Verification Banner if active */}
+          {rescanVerificationTarget && (
+            <div className="my-2 p-3 rounded-2xl bg-gradient-to-r from-amber-950/95 via-orange-950/90 to-amber-900/90 border-2 border-amber-400 text-amber-200 shadow-xl flex items-center justify-between gap-3 pointer-events-auto animate-in slide-in-from-top duration-300">
+              <div className="flex items-center gap-2.5 text-xs">
+                <Camera className="w-5 h-5 text-amber-400 animate-pulse flex-shrink-0" />
+                <div>
+                  <span className="font-black text-amber-300 block uppercase tracking-wide">
+                    CHẾ ĐỘ NGHIỆM THU: {rescanVerificationTarget.itemName}
+                  </span>
+                  <span className="text-[11px] text-slate-200 font-medium leading-tight block">
+                    Đưa chai đã trút sạch rỗng nước vào khung quét để AI xác nhận và mở khóa +2 điểm.
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  playClickSound();
+                  setRescanVerificationTarget(null);
+                  setScanStatusText('ĐÃ HỦY CHẾ ĐỘ NGHIỆM THU');
+                }}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-600 transition-all cursor-pointer flex-shrink-0 active:scale-95"
+              >
+                Hủy
+              </button>
+            </div>
+          )}
+
           {/* Central Targeting Box with laser sweep when scanning */}
-          <div className="relative mx-auto w-48 h-48 sm:w-64 sm:h-64 border-2 border-dashed border-emerald-400/40 rounded-3xl flex items-center justify-center">
+          <div
+            className={`relative mx-auto w-48 h-48 sm:w-64 sm:h-64 border-2 border-dashed rounded-3xl flex items-center justify-center transition-all ${
+              rescanVerificationTarget
+                ? 'border-amber-400/80 shadow-[0_0_25px_rgba(251,191,36,0.25)]'
+                : 'border-emerald-400/40'
+            }`}
+          >
             {/* Corner brackets */}
-            <div className="absolute -top-1 -left-1 w-5 h-5 border-t-2 border-l-2 border-emerald-400 rounded-tl-lg" />
-            <div className="absolute -top-1 -right-1 w-5 h-5 border-t-2 border-r-2 border-emerald-400 rounded-tr-lg" />
-            <div className="absolute -bottom-1 -left-1 w-5 h-5 border-b-2 border-l-2 border-emerald-400 rounded-bl-lg" />
-            <div className="absolute -bottom-1 -right-1 w-5 h-5 border-b-2 border-r-2 border-emerald-400 rounded-br-lg" />
+            <div
+              className={`absolute -top-1 -left-1 w-5 h-5 border-t-2 border-l-2 rounded-tl-lg ${
+                rescanVerificationTarget ? 'border-amber-400' : 'border-emerald-400'
+              }`}
+            />
+            <div
+              className={`absolute -top-1 -right-1 w-5 h-5 border-t-2 border-r-2 rounded-tr-lg ${
+                rescanVerificationTarget ? 'border-amber-400' : 'border-emerald-400'
+              }`}
+            />
+            <div
+              className={`absolute -bottom-1 -left-1 w-5 h-5 border-b-2 border-l-2 rounded-bl-lg ${
+                rescanVerificationTarget ? 'border-amber-400' : 'border-emerald-400'
+              }`}
+            />
+            <div
+              className={`absolute -bottom-1 -right-1 w-5 h-5 border-b-2 border-r-2 rounded-br-lg ${
+                rescanVerificationTarget ? 'border-amber-400' : 'border-emerald-400'
+              }`}
+            />
 
             {/* Crosshair */}
-            <div className="w-4 h-0.5 bg-emerald-400/60" />
-            <div className="h-4 w-0.5 bg-emerald-400/60 absolute" />
+            <div
+              className={`w-4 h-0.5 ${
+                rescanVerificationTarget ? 'bg-amber-400/80' : 'bg-emerald-400/60'
+              }`}
+            />
+            <div
+              className={`h-4 w-0.5 absolute ${
+                rescanVerificationTarget ? 'bg-amber-400/80' : 'bg-emerald-400/60'
+              }`}
+            />
 
             {/* Scanning laser beam animation */}
             <div className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_#22d3ee] animate-bounce opacity-80" />
@@ -903,25 +1237,30 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
       {/* Main Control Action Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-slate-900/95 border-2 border-slate-700/80 rounded-2xl shadow-2xl">
         {/* Shutter Capture / Enable Camera Buttons */}
-        <div className="flex items-center gap-2.5 flex-1 sm:flex-initial">
+        <div className="flex items-start gap-2.5 flex-1 sm:flex-initial">
           {cameraActive ? (
             <>
-              <button
-                id="btn-capture-scan"
-                onClick={() => {
-                  playClickSound();
-                  handleCaptureLive();
-                }}
-                disabled={isProcessing}
-                className={`flex-1 sm:flex-initial flex items-center justify-center gap-2.5 px-6 py-3 rounded-xl font-black text-sm tracking-wide shadow-2xl transition-all cursor-pointer ${
-                  isProcessing
-                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                    : 'bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 hover:from-emerald-300 hover:via-teal-200 hover:to-cyan-300 text-slate-950 shadow-emerald-500/30 hover:shadow-emerald-500/50 ring-2 ring-emerald-300/60 hover:ring-emerald-200 hover:scale-[1.03] active:scale-95'
-                }`}
-              >
-                <Camera className="w-5 h-5 text-slate-950" />
-                <span>QUÉT & NHẬN DIỆN AI</span>
-              </button>
+              <div className="flex flex-col gap-1 flex-1 sm:flex-initial">
+                <button
+                  id="btn-capture-scan"
+                  onClick={() => {
+                    playClickSound();
+                    handleCaptureLive();
+                  }}
+                  disabled={isProcessing}
+                  className={`flex items-center justify-center gap-2.5 px-6 py-3 rounded-xl font-black text-sm tracking-wide shadow-2xl transition-all cursor-pointer ${
+                    isProcessing
+                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                      : 'bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 hover:from-emerald-300 hover:via-teal-200 hover:to-cyan-300 text-slate-950 shadow-emerald-500/30 hover:shadow-emerald-500/50 ring-2 ring-emerald-300/60 hover:ring-emerald-200 hover:scale-[1.03] active:scale-95'
+                  }`}
+                >
+                  <Camera className="w-5 h-5 text-slate-950" />
+                  <span>QUÉT & NHẬN DIỆN AI</span>
+                </button>
+                <div className="text-[11px] font-mono text-cyan-300 text-center font-bold tracking-tight">
+                  ⚡ Hạn mức quét: <span className="text-emerald-300 font-black">{remainingQuota}/30</span> lượt hôm nay
+                </div>
+              </div>
 
               <button
                 id="btn-stop-camera"
@@ -930,35 +1269,55 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
                   stopCamera();
                 }}
                 title="Tắt Camera"
-                className="flex items-center gap-1.5 px-3 py-3 rounded-xl bg-slate-800 hover:bg-rose-950/70 text-slate-300 hover:text-rose-300 border-2 border-slate-700 hover:border-rose-500/60 shadow-md transition-all active:scale-95 cursor-pointer font-bold text-xs"
+                className="self-start flex items-center gap-1.5 px-3 py-3 rounded-xl bg-slate-800 hover:bg-rose-950/70 text-slate-300 hover:text-rose-300 border-2 border-slate-700 hover:border-rose-500/60 shadow-md transition-all active:scale-95 cursor-pointer font-bold text-xs"
               >
                 <VideoOff className="w-4 h-4 text-rose-400" />
                 <span className="hidden sm:inline">Tắt Cam</span>
               </button>
             </>
           ) : (
-            <button
-              id="btn-start-camera-bar"
-              onClick={() => {
-                playClickSound();
-                startCamera();
-              }}
-              disabled={isStartingCamera}
-              className="flex-1 sm:flex-initial flex items-center justify-center gap-2.5 px-6 py-3 rounded-xl font-black text-sm tracking-wide shadow-2xl transition-all cursor-pointer bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 hover:from-emerald-300 hover:via-teal-200 hover:to-cyan-300 text-slate-950 shadow-emerald-500/30 hover:shadow-emerald-500/50 ring-2 ring-emerald-300/60 hover:ring-emerald-200 hover:scale-[1.03] active:scale-95"
-            >
-              {isStartingCamera ? (
-                <>
-                  <RefreshCw className="w-5 h-5 text-slate-950 animate-spin" />
-                  <span>ĐANG MỞ CAMERA...</span>
-                </>
-              ) : (
-                <>
-                  <Video className="w-5 h-5 text-slate-950" />
-                  <span>BẬT CAMERA QUÉT</span>
-                </>
-              )}
-            </button>
+            <div className="flex flex-col gap-1 flex-1 sm:flex-initial">
+              <button
+                id="btn-start-camera-bar"
+                onClick={() => {
+                  playClickSound();
+                  startCamera();
+                }}
+                disabled={isStartingCamera}
+                className="flex items-center justify-center gap-2.5 px-6 py-3 rounded-xl font-black text-sm tracking-wide shadow-2xl transition-all cursor-pointer bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 hover:from-emerald-300 hover:via-teal-200 hover:to-cyan-300 text-slate-950 shadow-emerald-500/30 hover:shadow-emerald-500/50 ring-2 ring-emerald-300/60 hover:ring-emerald-200 hover:scale-[1.03] active:scale-95"
+              >
+                {isStartingCamera ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 text-slate-950 animate-spin" />
+                    <span>ĐANG MỞ CAMERA...</span>
+                  </>
+                ) : (
+                  <>
+                    <Video className="w-5 h-5 text-slate-950" />
+                    <span>BẬT CAMERA QUÉT</span>
+                  </>
+                )}
+              </button>
+              <div className="text-[11px] font-mono text-cyan-300 text-center font-bold tracking-tight">
+                ⚡ Hạn mức quét: <span className="text-emerald-300 font-black">{remainingQuota}/30</span> lượt hôm nay
+              </div>
+            </div>
           )}
+
+          {/* Upload Photo Button */}
+          <button
+            type="button"
+            id="btn-upload-file-scanner"
+            onClick={() => {
+              playClickSound();
+              fileInputRef.current?.click();
+            }}
+            className="self-start -mt-0.5 flex items-center gap-1.5 px-3.5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-2 border-slate-700 hover:border-cyan-400/60 shadow-md transition-all active:scale-95 cursor-pointer font-bold text-xs"
+            title="Tải ảnh rác từ thiết bị"
+          >
+            <Upload className="w-4 h-4 text-cyan-400" />
+            <span className="hidden sm:inline">Tải ảnh</span>
+          </button>
         </div>
 
         {/* Anti-Cheat Mode Controls */}
@@ -1003,6 +1362,52 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
               <span>Đã chặn: {duplicateBlockedCount} lần</span>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Quick STEM Test Cases for presentations and evaluation */}
+      <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl flex flex-wrap items-center justify-between gap-2.5 shadow-md">
+        <div className="flex items-center gap-1.5 text-xs text-slate-300 font-bold">
+          <Sparkles className="w-4 h-4 text-amber-400" />
+          <span className="uppercase text-[11px] tracking-wide text-slate-200">Mẫu thử STEM (Test Cases):</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            id="btn-test-bottle-liquid"
+            onClick={() => handleSelectDemoItem('demo-bottle-liquid')}
+            className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-amber-950/80 border border-amber-500/60 text-amber-200 hover:bg-amber-900/90 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+            title="Thử nghiệm chai nhựa còn nước -> Tạm khóa 0 điểm & Bắt buộc quét lại nghiệm thu"
+          >
+            <span>💧 Chai còn nước (Khóa 0đ)</span>
+          </button>
+          <button
+            type="button"
+            id="btn-test-bottle-empty"
+            onClick={() => handleSelectDemoItem('demo-pet-bottle')}
+            className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-teal-950/80 border border-teal-500/60 text-teal-200 hover:bg-teal-900/90 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+            title="Thử nghiệm chai nhựa đã rỗng sạch -> Nghiệm thu đạt chuẩn +2 điểm tái chế"
+          >
+            <span>🍶 Chai đã rỗng sạch (+2đ)</span>
+          </button>
+          <button
+            type="button"
+            id="btn-test-banana"
+            onClick={() => handleSelectDemoItem('demo-banana')}
+            className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-950/80 border border-emerald-500/60 text-emerald-200 hover:bg-emerald-900/90 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+            title="Thử nghiệm vỏ chuối -> Rác hữu cơ +1đ"
+          >
+            <span>🍌 Vỏ chuối (+1đ)</span>
+          </button>
+          <button
+            type="button"
+            id="btn-test-battery"
+            onClick={() => handleSelectDemoItem('demo-battery')}
+            className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-orange-950/80 border border-orange-500/60 text-orange-200 hover:bg-orange-900/90 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+            title="Thử nghiệm pin cũ nguy hại -> Rác vô cơ +3đ"
+          >
+            <span>🔋 Pin cũ (+3đ)</span>
+          </button>
         </div>
       </div>
 
@@ -1112,6 +1517,7 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
         errorMessage={pointsSubmissionError}
         successMessage={pointsSubmissionSuccess}
         onRetry={handleConfirmCompletePreparation}
+        onStartRescan={handleStartRescan}
       />
     </div>
   );

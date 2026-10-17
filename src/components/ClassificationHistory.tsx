@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { History, Trash2, ArrowUpRight, Filter, Clock, Sparkles, Sprout, Recycle, ShieldAlert, BarChart3, CheckCircle2, MinusCircle, AlertTriangle } from 'lucide-react';
+import { History, Trash2, ArrowUpRight, Filter, Clock, Sparkles, Sprout, Recycle, ShieldAlert, BarChart3, CheckCircle2, MinusCircle, AlertTriangle, Info } from 'lucide-react';
 import { WasteHistoryRecord, WasteCategory } from '../types';
 import { playClickSound } from '../utils/audio';
 
@@ -287,6 +287,21 @@ export const ClassificationHistory: React.FC<ClassificationHistoryProps> = ({
                         <div className="mt-1 text-[10px] font-semibold text-blue-300 flex items-center gap-1 bg-blue-950/50 border border-blue-500/40 px-2 py-0.5 rounded-md w-fit">
                           <Info className="w-3 h-3 text-blue-400" />
                           <span>Quy định địa phương: {item.localRuleNote}</span>
+                        </div>
+                      )}
+
+                      {/* Empty bottle rescan verified badge */}
+                      {item.rescanVerified && (
+                        <div className="mt-1 text-[10px] font-bold text-emerald-300 flex items-center gap-1 bg-emerald-950/60 border border-emerald-500/50 px-2 py-0.5 rounded-md w-fit">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                          <span>Đã xác minh trút rỗng nước (+2đ Tái chế)</span>
+                        </div>
+                      )}
+
+                      {item.requiresRescanEmpty && !item.rescanVerified && (
+                        <div className="mt-1 text-[10px] font-bold text-amber-300 flex items-center gap-1 bg-amber-950/60 border border-amber-500/50 px-2 py-0.5 rounded-md w-fit">
+                          <AlertTriangle className="w-3 h-3 text-amber-400" />
+                          <span>Chai còn nước: Chưa đạt chuẩn tái chế (0đ)</span>
                         </div>
                       )}
                     </div>
