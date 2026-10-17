@@ -164,6 +164,7 @@ const SUPABASE_URL = (
   'https://ykmpehvrgmtyhcxnefih.supabase.co'
 ).trim();
 const SUPABASE_ANON_KEY = (
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
   process.env.VITE_SUPABASE_ANON_KEY ||
   process.env.SUPABASE_ANON_KEY ||
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrbXBlaHZyZ210eWhjeG5lZmloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyMDI5NDAsImV4cCI6MjEwNzc3ODk0MH0.cFiebtP5kGYoT32EOmGIGACIAQ8954o3_iAaglQ2npI'
@@ -260,17 +261,34 @@ export function getLevelTitle(points: number): string {
   return 'Thành Viên Mới';
 }
 
+let cachedLeaderboardResult: (StoredPlayer & { levelTitle: string })[] | null = null;
+let lastLeaderboardCacheTime = 0;
+const LEADERBOARD_CACHE_TTL_MS = 2500;
+
+export function invalidateLeaderboardCache() {
+  cachedLeaderboardResult = null;
+  lastLeaderboardCacheTime = 0;
+}
+
 export function getLeaderboard(): (StoredPlayer & { levelTitle: string })[] {
+  const now = Date.now();
+  if (cachedLeaderboardResult && now - lastLeaderboardCacheTime < LEADERBOARD_CACHE_TTL_MS) {
+    return cachedLeaderboardResult;
+  }
+
   const sorted = [...cachedData.players].sort((a, b) => {
     if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
     if (b.correctCount !== a.correctCount) return b.correctCount - a.correctCount;
     return b.lastActive - a.lastActive;
   });
 
-  return sorted.map((p) => ({
+  cachedLeaderboardResult = sorted.map((p) => ({
     ...p,
     levelTitle: getLevelTitle(p.totalPoints),
   }));
+  lastLeaderboardCacheTime = now;
+
+  return cachedLeaderboardResult;
 }
 
 export function subscribeToStoreUpdates(listener: (event: any) => void) {
@@ -280,15 +298,37 @@ export function subscribeToStoreUpdates(listener: (event: any) => void) {
   };
 }
 
+let sseBroadcastTimer: NodeJS.Timeout | null = null;
+
 function notifyListeners(type: string, item?: StoredHistoryItem) {
-  const leaderboard = getLeaderboard();
-  for (const listener of listeners) {
-    try {
-      listener({ type, leaderboard, item });
-    } catch (e) {
-      console.warn('Listener notification notice:', e);
+  invalidateLeaderboardCache();
+
+  // If item notification, broadcast immediately
+  if (item) {
+    const leaderboard = getLeaderboard();
+    for (const listener of listeners) {
+      try {
+        listener({ type, leaderboard, item });
+      } catch (e) {
+        console.warn('Listener notification notice:', e);
+      }
     }
+    return;
   }
+
+  // Coalesce rapid leaderboard updates over 100ms window
+  if (sseBroadcastTimer) return;
+  sseBroadcastTimer = setTimeout(() => {
+    sseBroadcastTimer = null;
+    const leaderboard = getLeaderboard();
+    for (const listener of listeners) {
+      try {
+        listener({ type, leaderboard });
+      } catch (e) {
+        console.warn('Listener notification notice:', e);
+      }
+    }
+  }, 100);
 }
 
 export function upsertPlayer(profile: {
@@ -1001,25 +1041,38 @@ async function syncToSupabase(player: StoredPlayer, historyItem: StoredHistoryIt
   if (!supabase) return;
 
   try {
-    // 1. Try RPC with user id (6 params)
-    const { error: rpcErr6 } = await supabase.rpc('record_waste_classification', {
+    // 1. Try 7-parameter RPC with p_scan_id (Atomic row lock & idempotency check)
+    const { error: rpcErr7 } = await supabase.rpc('record_waste_classification', {
       p_item_name: historyItem.itemName,
       p_category: historyItem.category,
       p_points: historyItem.points,
       p_source: historyItem.source,
       p_confidence: historyItem.confidence,
       p_user_id: player.id,
+      p_scan_id: historyItem.scanId || null,
     });
 
-    if (rpcErr6) {
-      // Try 5 params RPC
-      await supabase.rpc('record_waste_classification', {
+    if (rpcErr7) {
+      // 2. Fallback to 6 params RPC
+      const { error: rpcErr6 } = await supabase.rpc('record_waste_classification', {
         p_item_name: historyItem.itemName,
         p_category: historyItem.category,
         p_points: historyItem.points,
         p_source: historyItem.source,
         p_confidence: historyItem.confidence,
+        p_user_id: player.id,
       });
+
+      if (rpcErr6) {
+        // 3. Fallback to 5 params RPC
+        await supabase.rpc('record_waste_classification', {
+          p_item_name: historyItem.itemName,
+          p_category: historyItem.category,
+          p_points: historyItem.points,
+          p_source: historyItem.source,
+          p_confidence: historyItem.confidence,
+        });
+      }
     }
 
     // 2. Direct table update on players

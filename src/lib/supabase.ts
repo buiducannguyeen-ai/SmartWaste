@@ -358,10 +358,12 @@ export async function recordClassificationOnline(params: {
   email?: string;
   organization?: string;
   avatar?: string;
+  scanId?: string;
 }): Promise<{
   success: boolean;
   totalPoints?: number;
   correctCount?: number;
+  idempotent?: boolean;
   error?: string | null;
 }> {
   const client = getSupabase();
@@ -370,16 +372,18 @@ export async function recordClassificationOnline(params: {
   }
 
   try {
-    // 1. Try 5-parameter RPC (active in Supabase security definer)
+    // 1. Try 7-parameter RPC with p_scan_id & p_user_id (Atomic row lock & idempotency check)
     let { data, error } = await client.rpc('record_waste_classification', {
       p_item_name: params.itemName,
       p_category: params.category,
       p_points: params.points,
       p_source: params.source,
       p_confidence: params.confidence || 0.95,
+      p_user_id: params.userId || params.userName,
+      p_scan_id: params.scanId || null,
     });
 
-    // 2. If not found or error, try 6-parameter RPC with p_user_id
+    // 2. Fallback to 6-parameter RPC if 7-param signature is not found
     if (error) {
       const rpc6 = await client.rpc('record_waste_classification', {
         p_item_name: params.itemName,
@@ -391,6 +395,21 @@ export async function recordClassificationOnline(params: {
       });
       if (!rpc6.error) {
         data = rpc6.data;
+        error = null;
+      }
+    }
+
+    // 3. Fallback to 5-parameter RPC
+    if (error) {
+      const rpc5 = await client.rpc('record_waste_classification', {
+        p_item_name: params.itemName,
+        p_category: params.category,
+        p_points: params.points,
+        p_source: params.source,
+        p_confidence: params.confidence || 0.95,
+      });
+      if (!rpc5.error) {
+        data = rpc5.data;
         error = null;
       }
     }

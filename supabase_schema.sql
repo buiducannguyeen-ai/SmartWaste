@@ -40,11 +40,21 @@ CREATE TABLE IF NOT EXISTS public.classification_logs (
   points_awarded INTEGER NOT NULL CHECK (points_awarded IN (1, 2, 3)),
   source TEXT NOT NULL DEFAULT 'webcam',
   confidence NUMERIC(4, 2) DEFAULT 0.95,
+  scan_id TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_logs_user 
   ON public.classification_logs (user_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_scan_id 
+  ON public.classification_logs (scan_id) 
+  WHERE scan_id IS NOT NULL;
+
+-- Index lọc tối ưu hóa cho Top bảng xếp hạng (Partial Index)
+CREATE INDEX IF NOT EXISTS idx_players_top_ranks 
+  ON public.players (total_points DESC, correct_count DESC)
+  WHERE total_points > 0;
 
 -- 3. BẢNG PHẢN ÁNH TÌNH TRẠNG RÁC THẢI CỘNG ĐỒNG (public.waste_reports)
 CREATE TABLE IF NOT EXISTS public.waste_reports (
@@ -62,11 +72,26 @@ CREATE TABLE IF NOT EXISTS public.waste_reports (
   status TEXT DEFAULT 'reported' CHECK (status IN ('reported', 'investigating', 'resolved')),
   upvotes INTEGER NOT NULL DEFAULT 0,
   resolution_note TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_waste_reports_created 
   ON public.waste_reports (created_at DESC);
+
+-- Trigger tự động cập nhật updated_at
+CREATE OR REPLACE FUNCTION public.set_current_timestamp_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_players_updated_at ON public.players;
+CREATE TRIGGER trg_players_updated_at
+  BEFORE UPDATE ON public.players
+  FOR EACH ROW EXECUTE FUNCTION public.set_current_timestamp_updated_at();
 
 -- ==============================================================================
 -- 4. KÍCH HOẠT BẢO MẬT ROW LEVEL SECURITY (RLS)
@@ -141,8 +166,8 @@ CREATE TRIGGER on_auth_user_created
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- ==============================================================================
--- 6. HÀM TÍCH ĐIỂM BẢO MẬT & ĐỒNG BỘ ĐA THIẾT BỊ (STORED PROCEDURE / RPC)
--- Ngăn chặn người dùng sửa điểm qua console trình duyệt.
+-- 6. HÀM TÍCH ĐIỂM BẢO MẬT VỚI ROW-LEVEL LOCKING & CHỐNG RACE CONDITION (RPC)
+-- Ngăn chặn người dùng sửa điểm qua console và chống spam request đồng thời.
 -- Quy tắc điểm chuẩn: Hữu cơ = 1đ, Tái chế = 2đ, Vô cơ = 3đ.
 -- ==============================================================================
 CREATE OR REPLACE FUNCTION public.record_waste_classification(
@@ -151,7 +176,8 @@ CREATE OR REPLACE FUNCTION public.record_waste_classification(
   p_points INT,
   p_source TEXT DEFAULT 'webcam',
   p_confidence NUMERIC DEFAULT 0.95,
-  p_user_id TEXT DEFAULT NULL
+  p_user_id TEXT DEFAULT NULL,
+  p_scan_id TEXT DEFAULT NULL
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -162,6 +188,7 @@ DECLARE
   v_user_id TEXT;
   v_allowed_points INT;
   v_updated_user RECORD;
+  v_existing_log RECORD;
 BEGIN
   -- 1. Xác định ID người chơi
   IF auth.uid() IS NOT NULL THEN
@@ -184,7 +211,27 @@ BEGIN
     v_user_id := gen_random_uuid()::TEXT;
   END IF;
 
-  -- 2. Quy chuẩn điểm theo loại rác STEM
+  -- 2. Kiểm tra Idempotency nguyên tử: nếu scan_id đã được ghi nhận điểm, không cộng lần 2
+  IF p_scan_id IS NOT NULL AND p_scan_id <> '' THEN
+    SELECT * INTO v_existing_log 
+    FROM public.classification_logs 
+    WHERE scan_id = p_scan_id 
+    LIMIT 1;
+    
+    IF FOUND THEN
+      SELECT * INTO v_updated_user FROM public.players WHERE id = v_user_id;
+      RETURN jsonb_build_object(
+        'success', true,
+        'idempotent', true,
+        'awarded_points', v_existing_log.points_awarded,
+        'total_points', COALESCE(v_updated_user.total_points, 0),
+        'correct_count', COALESCE(v_updated_user.correct_count, 0),
+        'username', COALESCE(v_updated_user.username, 'Thí sinh STEM')
+      );
+    END IF;
+  END IF;
+
+  -- 3. Quy chuẩn điểm theo loại rác STEM
   IF p_category = 'organic' THEN
     v_allowed_points := 1;
   ELSIF p_category = 'recyclable' THEN
@@ -197,7 +244,10 @@ BEGIN
 
   p_points := v_allowed_points;
 
-  -- 3. Cập nhật điểm trực tiếp vào bảng players
+  -- 4. Khóa hàng người chơi (ROW-LEVEL LOCK FOR UPDATE) chống race condition
+  PERFORM 1 FROM public.players WHERE id = v_user_id FOR UPDATE;
+
+  -- 5. Cập nhật điểm trực tiếp vào bảng players
   UPDATE public.players
   SET
     total_points = total_points + p_points,
@@ -238,26 +288,29 @@ BEGIN
     v_user_id := v_updated_user.id;
   END IF;
 
-  -- 4. Ghi lịch sử phân loại vào classification_logs
+  -- 6. Ghi lịch sử phân loại vào classification_logs kèm scan_id duy nhất
   INSERT INTO public.classification_logs (
     user_id,
     item_name,
     category,
     points_awarded,
     source,
-    confidence
+    confidence,
+    scan_id
   ) VALUES (
     v_user_id,
     p_item_name,
     p_category,
     p_points,
     COALESCE(p_source, 'webcam'),
-    COALESCE(p_confidence, 0.95)
+    COALESCE(p_confidence, 0.95),
+    p_scan_id
   );
 
-  -- 5. Trả về kết quả cập nhật mới nhất
+  -- 7. Trả về kết quả cập nhật mới nhất
   RETURN jsonb_build_object(
     'success', true,
+    'idempotent', false,
     'awarded_points', p_points,
     'total_points', v_updated_user.total_points,
     'correct_count', v_updated_user.correct_count,
@@ -266,8 +319,36 @@ BEGIN
 END;
 $$;
 
+-- Hàm tương thích ngược 6 tham số
+CREATE OR REPLACE FUNCTION public.record_waste_classification(
+  p_item_name TEXT,
+  p_category TEXT,
+  p_points INT,
+  p_source TEXT DEFAULT 'webcam',
+  p_confidence NUMERIC DEFAULT 0.95,
+  p_user_id TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN public.record_waste_classification(
+    p_item_name,
+    p_category,
+    p_points,
+    p_source,
+    p_confidence,
+    p_user_id,
+    NULL
+  );
+END;
+$$;
+
 -- Cấp quyền chạy Stored Procedure cho tất cả client
-GRANT EXECUTE ON FUNCTION public.record_waste_classification TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.record_waste_classification(TEXT, TEXT, INT, TEXT, NUMERIC, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.record_waste_classification(TEXT, TEXT, INT, TEXT, NUMERIC, TEXT) TO anon, authenticated, service_role;
 
 -- ==============================================================================
 -- 7. KÍCH HOẠT SUPABASE REALTIME ĐỂ BẢNG XẾP HẠNG & BÁO CÁO CẬP NHẬT TỨC THÌ
@@ -314,7 +395,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_quotas_user_date
 
 ALTER TABLE public.scan_quotas ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow quotas all" ON public.scan_quotas;
-CREATE POLICY "Allow quotas all" ON public.scan_quotas FOR ALL USING (true) WITH CHECK (true);
 
 -- ==============================================================================
 -- 9. BẢNG PHIÊN QUÉT CHỜ NGHIỆM THU (public.pending_scans)
@@ -341,7 +421,6 @@ CREATE INDEX IF NOT EXISTS idx_pending_scans_user
 
 ALTER TABLE public.pending_scans ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow pending_scans all" ON public.pending_scans;
-CREATE POLICY "Allow pending_scans all" ON public.pending_scans FOR ALL USING (true) WITH CHECK (true);
 
 -- ==============================================================================
 -- 10. BẢNG DẤU VÂN TAY ẢNH CHỐNG GIAN LẬN (public.image_fingerprints)
@@ -371,7 +450,6 @@ CREATE INDEX IF NOT EXISTS idx_fingerprints_checksum
 
 ALTER TABLE public.image_fingerprints ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow image_fingerprints all" ON public.image_fingerprints;
-CREATE POLICY "Allow image_fingerprints all" ON public.image_fingerprints FOR ALL USING (true) WITH CHECK (true);
 
 -- ==============================================================================
 -- 11. BẢNG TIẾP NHẬN PHẢN HỒI NHẬN NHẦM (public.waste_misclassifications)
@@ -391,7 +469,14 @@ CREATE TABLE IF NOT EXISTS public.waste_misclassifications (
 
 ALTER TABLE public.waste_misclassifications ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow waste_misclassifications all" ON public.waste_misclassifications;
-CREATE POLICY "Allow waste_misclassifications all" ON public.waste_misclassifications FOR ALL USING (true) WITH CHECK (true);
+
+-- Thu hồi quyền truy cập trực tiếp các bảng nội bộ khỏi anon/authenticated
+REVOKE ALL ON TABLE
+  public.scan_quotas,
+  public.pending_scans,
+  public.image_fingerprints,
+  public.waste_misclassifications
+FROM anon, authenticated;
 
 -- ==============================================================================
 -- 12. HÀM RESET TOÀN BỘ ĐIỂM CHO CUỘC THI MỚI (RPC: reset_all_player_points)
@@ -425,5 +510,8 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.reset_all_player_points TO anon, authenticated, service_role;
+-- Bảo vệ hàm reset điểm: Chỉ service_role (quản trị viên cấp cao) mới được chạy
+REVOKE ALL ON FUNCTION public.reset_all_player_points() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reset_all_player_points() TO service_role;
+
 

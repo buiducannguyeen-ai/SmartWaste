@@ -1,0 +1,6 @@
+{
+  "summary": "Kế hoạch chi tiết tối ưu hóa toàn diện Database SQL và Server Backend cho EcoSort AI:\n1. Giao dịch nguyên tử SQL với khóa Row-Level Locking (FOR UPDATE) chống gian lận Race Condition.\n2. Thuật toán xử lý vân tay ảnh dHash siêu tốc trên Node.js giảm độ trễ nhận diện AI.\n3. Bộ nhớ đệm LRU Cache và cơ chế gom nhóm phát sóng Realtime SSE/Supabase đa thiết bị.",
+  "updatedAt": "2026-10-17T04:13:49.679934133Z",
+  "requestFeedback": true,
+  "userFacing": true
+}
