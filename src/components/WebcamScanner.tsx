@@ -121,10 +121,12 @@ export const WebcamScanner: React.FC<WebcamScannerProps> = ({
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
       const res = await fetch('/api/quota/status', { headers });
-      const data = await res.json().catch(() => null);
-      if (data && typeof data.remaining === 'number') {
-        setRemainingQuota(data.remaining);
-        if (typeof data.limit === 'number') setQuotaLimit(data.limit);
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && typeof data.remaining === 'number') {
+          setRemainingQuota(data.remaining);
+          if (typeof data.limit === 'number') setQuotaLimit(data.limit);
+        }
       }
     } catch (e) {
       console.warn('Notice syncing quota from server:', e);

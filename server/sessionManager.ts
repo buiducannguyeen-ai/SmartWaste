@@ -191,7 +191,12 @@ export function getVerifiedUserSession(req: Request): UserSession {
   }
 
   // Fallback: If no valid session token provided, derive or generate a tamper-proof guest session
-  const clientIp = req.ip || req.socket.remoteAddress || '127.0.0.1';
+  const clientIp =
+    (req.headers && (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()) ||
+    (req.headers && (req.headers['x-real-ip'] as string)) ||
+    req.ip ||
+    req.socket?.remoteAddress ||
+    '127.0.0.1';
   return createGuestSession(clientIp);
 }
 

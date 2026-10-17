@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import {
@@ -166,7 +165,12 @@ app.post("/api/classify-waste", async (req, res) => {
       return res.status(400).json({ error: "Thiếu dữ liệu hình ảnh (base64 image required)" });
     }
 
-    const clientIp = req.ip || req.socket.remoteAddress || "unknown_ip";
+    const clientIp =
+      (req.headers && (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()) ||
+      (req.headers && (req.headers["x-real-ip"] as string)) ||
+      req.ip ||
+      req.socket?.remoteAddress ||
+      "unknown_ip";
     const userSession = getVerifiedUserSession(req);
     const userId = userSession.userId;
 
@@ -1954,6 +1958,7 @@ app.post("/api/sheets/register", async (req, res) => {
 async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -1977,4 +1982,15 @@ async function startServer() {
   });
 }
 
-startServer();
+const isMainScript = Boolean(
+  process.argv[1] && (
+    process.argv[1].endsWith('server.ts') ||
+    process.argv[1].endsWith('server.js')
+  )
+);
+
+if (isMainScript && !process.env.VERCEL) {
+  startServer();
+}
+
+export default app;

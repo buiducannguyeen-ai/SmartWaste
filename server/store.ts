@@ -155,7 +155,7 @@ interface StoreData {
   quotas?: Record<string, UserQuotaRecord>;
 }
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+const DATA_DIR = process.env.VERCEL ? path.join('/tmp', 'data') : path.join(process.cwd(), 'data');
 const DATA_FILE = path.join(DATA_DIR, 'stem_data.json');
 
 const SUPABASE_URL = (

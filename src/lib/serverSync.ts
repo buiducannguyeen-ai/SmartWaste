@@ -1,4 +1,5 @@
 import { LeaderboardEntry, UserProfile, WasteCategory, MisclassificationFeedbackPayload, PreparationStep } from '../types';
+import { isSupabaseConfigured } from './supabase.ts';
 
 export interface RecordWastePayload {
   scanId?: string;
@@ -116,20 +117,54 @@ export async function registerPlayerOnServer(user: UserProfile): Promise<boolean
   }
 }
 
+let sseDisabledGlobally = false;
+
 /**
- * Subscribe to Real-Time SSE Stream for immediate multi-device updates.
- * Fires whenever any connected phone, laptop, or tablet scores points.
+ * Subscribe to Real-Time stream or controlled polling for multi-device updates.
+ * Prioritizes Supabase Realtime when available, with controlled polling fallback and exponential backoff.
  */
 export function listenToLeaderboardStream(
   onUpdate: (leaderboard: LeaderboardEntry[], eventType: string) => void
 ): () => void {
   let eventSource: EventSource | null = null;
   let isClosed = false;
-  let reconnectTimeout: any = null;
+  let pollTimeout: any = null;
+  let consecutiveErrors = 0;
 
-  function connect() {
+  // Controlled polling with exponential backoff if errors occur
+  function scheduleNextPoll(delayMs = 15000) {
     if (isClosed) return;
+    pollTimeout = setTimeout(async () => {
+      if (isClosed) return;
+      try {
+        const res = await fetch('/api/leaderboard');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.leaderboard)) {
+            consecutiveErrors = 0;
+            onUpdate(data.leaderboard, 'poll');
+          }
+          scheduleNextPoll(15000); // 15 seconds standard polling
+        } else {
+          consecutiveErrors++;
+          // Exponential backoff up to 60s. If 3 consecutive errors, pause polling
+          if (consecutiveErrors < 3) {
+            scheduleNextPoll(Math.min(60000, 15000 * Math.pow(2, consecutiveErrors)));
+          }
+        }
+      } catch (e) {
+        consecutiveErrors++;
+        if (consecutiveErrors < 3) {
+          scheduleNextPoll(Math.min(60000, 15000 * Math.pow(2, consecutiveErrors)));
+        }
+      }
+    }, delayMs);
+  }
 
+  // If Supabase Realtime is configured and active, it handles live updates via WebSockets
+  const hasSupabase = isSupabaseConfigured();
+
+  if (!hasSupabase && !sseDisabledGlobally && typeof EventSource !== 'undefined') {
     try {
       eventSource = new EventSource('/api/leaderboard/stream');
 
@@ -145,27 +180,27 @@ export function listenToLeaderboardStream(
       };
 
       eventSource.onerror = () => {
+        // If SSE encounters an error (like 404 on Vercel), immediately close and disable SSE
         if (eventSource) {
           eventSource.close();
           eventSource = null;
         }
-        if (!isClosed) {
-          // Reconnect after 3 seconds
-          reconnectTimeout = setTimeout(connect, 3000);
-        }
+        sseDisabledGlobally = true;
       };
     } catch (e) {
-      if (!isClosed) {
-        reconnectTimeout = setTimeout(connect, 4000);
-      }
+      sseDisabledGlobally = true;
     }
   }
 
-  connect();
+  // Start controlled polling
+  scheduleNextPoll(hasSupabase ? 20000 : 15000);
 
   return () => {
     isClosed = true;
-    if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    if (pollTimeout) {
+      clearTimeout(pollTimeout);
+      pollTimeout = null;
+    }
     if (eventSource) {
       eventSource.close();
       eventSource = null;
