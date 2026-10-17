@@ -1,5 +1,5 @@
 import { LeaderboardEntry, UserProfile, WasteCategory, MisclassificationFeedbackPayload, PreparationStep } from '../types';
-import { isSupabaseConfigured } from './supabase.ts';
+import { isSupabaseConfigured, fetchOnlineLeaderboard } from './supabase.ts';
 
 export interface RecordWastePayload {
   scanId?: string;
@@ -82,15 +82,18 @@ export async function fetchServerLeaderboard(): Promise<LeaderboardEntry[]> {
     const res = await fetch('/api/leaderboard', {
       headers: { 'Cache-Control': 'no-cache' },
     });
-    if (!res.ok) return [];
-    const data = await res.json();
-    if (data && Array.isArray(data.leaderboard)) {
-      return data.leaderboard;
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.leaderboard)) {
+        return data.leaderboard;
+      }
     }
-    return [];
+    // Fallback directly to Supabase if API is unreachable or returned 404
+    const online = await fetchOnlineLeaderboard().catch(() => ({ entries: [] }));
+    return online.entries || [];
   } catch (err) {
-    console.warn('Network notice fetching server leaderboard:', err);
-    return [];
+    const online = await fetchOnlineLeaderboard().catch(() => ({ entries: [] }));
+    return online.entries || [];
   }
 }
 
@@ -146,6 +149,10 @@ export function listenToLeaderboardStream(
           }
           scheduleNextPoll(15000); // 15 seconds standard polling
         } else {
+          const online = await fetchOnlineLeaderboard().catch(() => ({ entries: [] }));
+          if (online.entries && online.entries.length > 0) {
+            onUpdate(online.entries, 'poll-supabase');
+          }
           consecutiveErrors++;
           // Exponential backoff up to 60s. If 3 consecutive errors, pause polling
           if (consecutiveErrors < 3) {
@@ -153,6 +160,10 @@ export function listenToLeaderboardStream(
           }
         }
       } catch (e) {
+        const online = await fetchOnlineLeaderboard().catch(() => ({ entries: [] }));
+        if (online.entries && online.entries.length > 0) {
+          onUpdate(online.entries, 'poll-supabase');
+        }
         consecutiveErrors++;
         if (consecutiveErrors < 3) {
           scheduleNextPoll(Math.min(60000, 15000 * Math.pow(2, consecutiveErrors)));

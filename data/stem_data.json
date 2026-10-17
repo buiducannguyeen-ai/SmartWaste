@@ -83,6 +83,20 @@
       "inorganicCount": 0,
       "lastActive": 1792219230215,
       "createdAt": 1792219230156
+    },
+    {
+      "id": "user-1792218573025",
+      "name": "Thí sinh STEM",
+      "email": "thsinhstem@ecosort.stem",
+      "organization": "Khối Sáng Tạo STEM",
+      "avatar": "🌱",
+      "totalPoints": 2,
+      "correctCount": 0,
+      "organicCount": 0,
+      "recyclableCount": 0,
+      "inorganicCount": 0,
+      "lastActive": 1792222235629,
+      "createdAt": 1792222235627
     }
   ],
   "history": [],
