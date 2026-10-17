@@ -103,7 +103,7 @@ export const PreparationChecklistModal: React.FC<PreparationChecklistModalProps>
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200"
     >
       <div
-        className={`w-full max-w-lg bg-gradient-to-b ${cat.gradientBg} border-2 ${cat.borderColor} rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200`}
+        className={`w-full max-w-2xl bg-gradient-to-b ${cat.gradientBg} border-2 ${cat.borderColor} rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200`}
       >
         {/* Top 3-State Progress Pipeline */}
         <div className="px-4 py-2.5 bg-slate-950/90 border-b border-slate-800 text-[11px] font-mono flex items-center justify-between gap-2">

@@ -55,9 +55,9 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-// Support larger payload for images and webcam base64 (Upgraded to 500MB)
-app.use(express.json({ limit: "500mb" }));
-app.use(express.urlencoded({ limit: "500mb", extended: true }));
+// Support payload for images and webcam base64 (Limited to 10MB)
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 // Express JSON body error handler - return pure JSON instead of default HTML error page
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -65,7 +65,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
     return res.status(413).json({
       success: false,
       approved: false,
-      error: 'Dung lượng hình ảnh gửi lên quá lớn (vượt quá giới hạn 500MB). Vui lòng chọn ảnh có kích thước dưới 500MB.',
+      error: 'Dung lượng hình ảnh gửi lên quá lớn (vượt quá giới hạn 10MB). Vui lòng chọn ảnh có kích thước dưới 10MB.',
     });
   }
   if (err instanceof SyntaxError && 'body' in err) {
@@ -181,10 +181,22 @@ app.post("/api/classify-waste", async (req, res) => {
     }
 
     // Verify benchmark mode permission:
-    // Teachers / Jury must provide valid token or authenticated session.
-    // Absolutely NO hardcoded fallback secrets like "STEM2026" or "ecosort_admin_2026"!
+    // Teachers / Jury must provide valid token or authenticated admin session (\Admin_test/).
     const isBenchmarkMode = Boolean(isBenchmark);
-    const isBenchmarkAuthorized = isBenchmarkMode; // Bypassed: Admin \Admin_test/ is already authenticated
+    const benchmarkToken = (req.headers["x-benchmark-auth"] as string) ||
+      (req.headers.authorization?.replace(/^Bearer /, "") || "") ||
+      req.body.benchmarkSecret;
+    const isEvaluatorTokenValid = isEvaluatorAuthorized(benchmarkToken);
+    const isAdminUserSession = userSession.role === 'admin' || userSession.name === '\\Admin_test/';
+    const isBenchmarkAuthorized = isBenchmarkMode && (isEvaluatorTokenValid || isAdminUserSession);
+
+    if (isBenchmarkMode && !isBenchmarkAuthorized) {
+      return res.status(403).json({
+        success: false,
+        error: "Chế độ kiểm thử STEM Lab yêu cầu quyền truy cập của giáo viên hoặc ban giám khảo (mã xác thực ban đánh giá). Không được dùng để vượt hạn mức hay gian lận.",
+        code: "BENCHMARK_UNAUTHORIZED",
+      });
+    }
 
     // Extract raw base64 data and mimeType
     let base64Data = image;
