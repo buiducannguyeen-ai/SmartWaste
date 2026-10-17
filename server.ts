@@ -24,6 +24,13 @@ import {
   addStoredFingerprint,
   clearAllStoredFingerprints,
   evaluateFingerprintServerSide,
+  DAILY_SCAN_LIMIT,
+  getScanQuota,
+  consumeScanQuota,
+  createPendingScanSession,
+  getPendingScanSession,
+  computeServerImageChecksum,
+  findStoredFingerprintByChecksum,
 } from "./server/store.ts";
 import type { StoredWasteReport, StoredFingerprintRecord } from "./server/store.ts";
 import { moderateWasteReport } from "./server/moderation.ts";
@@ -82,37 +89,54 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+// Daily scan quota status API
+app.get("/api/quota/status", (req, res) => {
+  const clientIp = req.ip || req.socket.remoteAddress || "unknown_ip";
+  const rawUserId = (req.query.userId as string) || "";
+  const userId = rawUserId.trim() ? rawUserId.trim() : `guest_${clientIp.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  const quota = getScanQuota(userId);
+  res.json({
+    success: true,
+    userId,
+    ...quota,
+    resetTime: "00:00 (Asia/Ho_Chi_Minh)",
+  });
+});
+
 // AI Waste Classification API
 app.post("/api/classify-waste", async (req, res) => {
   try {
-    const { image, hint, isRescanVerification, previousScanId, originalItemName, fingerprint } = req.body;
+    const {
+      image,
+      hint,
+      isRescanVerification,
+      previousScanId,
+      originalItemName,
+      fingerprint,
+      isBenchmark,
+      userId: rawUserId,
+    } = req.body;
 
     if (!image) {
       return res.status(400).json({ error: "Thiếu dữ liệu hình ảnh (base64 image required)" });
     }
 
-    // Server-Side Anti-Cheat Check across ALL devices
-    const isVerificationMode = Boolean(isRescanVerification);
-    if (!isVerificationMode && fingerprint) {
-      const serverDupCheck = evaluateFingerprintServerSide(fingerprint);
-      if (serverDupCheck.isDuplicate) {
-        return res.json({
-          success: false,
-          isDuplicate: true,
-          duplicateCheck: serverDupCheck,
-          error: serverDupCheck.reason || "Phát hiện trùng lặp dữ liệu ảnh trên máy chủ (Anti-cheat).",
-          data: {
-            itemName: serverDupCheck.matchedRecord?.itemName || "Vật thể quét lặp",
-            category: "unknown",
-            points: 0,
-            confidence: 0,
-            isWaste: false,
-            isUncertain: true,
-            uncertaintyReason: serverDupCheck.reason,
-            detectionTier: serverDupCheck.detectionTier,
-          },
-        });
-      }
+    const clientIp = req.ip || req.socket.remoteAddress || "unknown_ip";
+    const userId = rawUserId && String(rawUserId).trim() ? String(rawUserId).trim() : `guest_${clientIp.replace(/[^a-zA-Z0-9]/g, "_")}`;
+
+    // Verify benchmark mode permission:
+    // Teachers / Jury must provide valid secret (x-benchmark-auth header or body secret)
+    const isBenchmarkMode = Boolean(isBenchmark);
+    const benchmarkHeader = (req.headers["x-benchmark-auth"] as string) || "";
+    const benchmarkSecret = process.env.ADMIN_SECRET || "STEM2026";
+    const isBenchmarkAuthorized = isBenchmarkMode && (benchmarkHeader === benchmarkSecret || req.body.benchmarkSecret === benchmarkSecret);
+
+    if (isBenchmarkMode && !isBenchmarkAuthorized) {
+      return res.status(403).json({
+        success: false,
+        error: "Chế độ kiểm thử STEM Lab yêu cầu quyền truy cập của giáo viên hoặc ban giám khảo (mã xác thực ban đánh giá). Không được dùng để vượt hạn mức hay gian lận.",
+        code: "BENCHMARK_UNAUTHORIZED",
+      });
     }
 
     // Extract raw base64 data and mimeType
@@ -125,6 +149,84 @@ app.post("/api/classify-waste", async (req, res) => {
       const match = parts[0].match(/data:(.*?);base64/);
       if (match) {
         mimeType = match[1];
+      }
+    }
+
+    // 1. Quota Check (Server-authoritative 30 scans/day reset at 00:00 Asia/Ho_Chi_Minh)
+    // Opening camera does NOT consume quota. Only accepted classification request is counted.
+    const isVerificationMode = Boolean(isRescanVerification);
+    let currentQuota = getScanQuota(userId);
+
+    if (!isBenchmarkAuthorized && !isVerificationMode) {
+      const quotaCheck = consumeScanQuota(userId);
+      if (!quotaCheck.allowed) {
+        return res.status(429).json({
+          success: false,
+          error: quotaCheck.reason || "Bạn đã dùng hết hạn mức 30 lượt quét AI hôm nay. Hạn mức sẽ tự động được làm mới vào lúc 00:00 (giờ Việt Nam).",
+          code: "QUOTA_EXCEEDED",
+          quota: quotaCheck,
+        });
+      }
+      currentQuota = quotaCheck;
+    }
+
+    // 2. Server-side Image Checksum & Anti-Cheat Check (Directly from uploaded image bytes)
+    const serverChecksum = computeServerImageChecksum(base64Data);
+
+    if (!isVerificationMode && !isBenchmarkAuthorized) {
+      // Check exact duplicate file in server store
+      const exactDuplicate = findStoredFingerprintByChecksum(serverChecksum);
+      if (exactDuplicate) {
+        return res.json({
+          success: false,
+          isDuplicate: true,
+          duplicateCheck: {
+            isDuplicate: true,
+            similarity: 1.0,
+            timeSinceLastScanMs: Date.now() - exactDuplicate.timestamp,
+            isExactFileMatch: true,
+            matchedRecord: exactDuplicate,
+            detectionTier: "exact_file",
+            reason: `Tệp ảnh này trùng khớp hoàn toàn (100% byte checksum) với mẫu "${exactDuplicate.itemName}" đã từng nhận điểm trên hệ thống.`,
+            suggestedAction: "Không dùng lại cùng một tệp ảnh để quét nhiều lần. Hãy chụp món rác thật ngoài đời!",
+          },
+          error: `Phát hiện ảnh trùng khớp 100% (checksum server-side) với mẫu "${exactDuplicate.itemName}" đã từng nhận điểm.`,
+          data: {
+            itemName: exactDuplicate.itemName,
+            category: "unknown",
+            points: 0,
+            confidence: 0,
+            isWaste: false,
+            isUncertain: true,
+            detectionTier: "exact_file",
+          },
+          quota: currentQuota,
+        });
+      }
+
+      // Check client-provided perceptual hash with server-enforced checksum
+      if (fingerprint && typeof fingerprint === "object") {
+        fingerprint.checksum = serverChecksum;
+        const serverDupCheck = evaluateFingerprintServerSide(fingerprint);
+        if (serverDupCheck.isDuplicate) {
+          return res.json({
+            success: false,
+            isDuplicate: true,
+            duplicateCheck: serverDupCheck,
+            error: serverDupCheck.reason || "Phát hiện trùng lặp dữ liệu ảnh trên máy chủ (Anti-cheat).",
+            data: {
+              itemName: serverDupCheck.matchedRecord?.itemName || "Vật thể quét lặp",
+              category: "unknown",
+              points: 0,
+              confidence: 0,
+              isWaste: false,
+              isUncertain: true,
+              uncertaintyReason: serverDupCheck.reason,
+              detectionTier: serverDupCheck.detectionTier,
+            },
+            quota: currentQuota,
+          });
+        }
       }
     }
 

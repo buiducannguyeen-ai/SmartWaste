@@ -32,6 +32,7 @@ import { WasteGuideModal } from './components/WasteGuideModal';
 import { StemPresentationView } from './components/StemPresentationView';
 import { SupabaseSqlModal } from './components/SupabaseSqlModal';
 import { WasteReportsView } from './components/WasteReportsView';
+import { AiAccuracyEvaluationView } from './components/AiAccuracyEvaluationView';
 import {
   isSupabaseConfigured,
   getSupabase,
@@ -74,7 +75,7 @@ export default function App() {
   const [isSqlModalOpen, setIsSqlModalOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMuted, setIsMuted] = useState(getIsMuted);
-  const [activeTab, setActiveTab] = useState<'sorting' | 'reports'>('sorting');
+  const [activeTab, setActiveTab] = useState<'sorting' | 'reports' | 'benchmark'>('sorting');
 
   const isSupabaseLive = isSupabaseConfigured();
   const currentUserRef = useRef<UserProfile | null>(currentUser);
@@ -683,7 +684,9 @@ export default function App() {
 
       {/* Main Content Dashboard */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
-        {activeTab === 'reports' ? (
+        {activeTab === 'benchmark' ? (
+          <AiAccuracyEvaluationView />
+        ) : activeTab === 'reports' ? (
           <WasteReportsView
             currentUser={currentUser}
             onOpenLogin={() => setIsLoginModalOpen(true)}

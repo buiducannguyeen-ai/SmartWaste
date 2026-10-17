@@ -1,5 +1,5 @@
 import React from 'react';
-import { Leaf, Cpu, Volume2, VolumeX, Maximize2, Minimize2, BookOpen, LogOut, User, Award, Presentation, AlertOctagon, Sparkles } from 'lucide-react';
+import { Leaf, Cpu, Volume2, VolumeX, Maximize2, Minimize2, BookOpen, LogOut, User, Award, Presentation, AlertOctagon, Sparkles, FlaskConical } from 'lucide-react';
 import { UserProfile } from '../types';
 import { playClickSound } from '../utils/audio';
 
@@ -12,8 +12,8 @@ interface NavbarProps {
   onOpenGuide: () => void;
   onSwitchUser: () => void;
   recentPointChange?: number | null;
-  activeTab?: 'sorting' | 'reports';
-  onSelectTab?: (tab: 'sorting' | 'reports') => void;
+  activeTab?: 'sorting' | 'reports' | 'benchmark';
+  onSelectTab?: (tab: 'sorting' | 'reports' | 'benchmark') => void;
   reportsCount?: number;
 }
 
@@ -61,7 +61,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   playClickSound();
                   onSelectTab('sorting');
                 }}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                className={`px-2 py-1 rounded-lg text-xs font-bold transition-all ${
                   activeTab === 'sorting'
                     ? 'bg-emerald-500 text-slate-950 shadow-sm'
                     : 'text-slate-400 hover:text-slate-200'
@@ -75,13 +75,28 @@ export const Navbar: React.FC<NavbarProps> = ({
                   playClickSound();
                   onSelectTab('reports');
                 }}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                className={`px-2 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
                   activeTab === 'reports'
                     ? 'bg-teal-500 text-slate-950 shadow-sm'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
                 <span>Phản Ánh</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  playClickSound();
+                  onSelectTab('benchmark');
+                }}
+                className={`px-2 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                  activeTab === 'benchmark'
+                    ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <FlaskConical className="w-3 h-3" />
+                <span>Kiểm Thử</span>
               </button>
             </div>
           )}
@@ -97,7 +112,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 playClickSound();
                 onSelectTab('sorting');
               }}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-black transition-all ${
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-black transition-all ${
                 activeTab === 'sorting'
                   ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-md shadow-emerald-500/20'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
@@ -114,7 +129,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 playClickSound();
                 onSelectTab('reports');
               }}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-black transition-all ${
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-black transition-all ${
                 activeTab === 'reports'
                   ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 shadow-md shadow-teal-500/20'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
@@ -122,6 +137,23 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <AlertOctagon className="w-3.5 h-3.5 text-rose-400" />
               <span>Phản Ánh Ô Nhiễm</span>
+            </button>
+
+            <button
+              id="tab-nav-benchmark"
+              type="button"
+              onClick={() => {
+                playClickSound();
+                onSelectTab('benchmark');
+              }}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-black transition-all ${
+                activeTab === 'benchmark'
+                  ? 'bg-gradient-to-r from-cyan-500 to-teal-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              }`}
+            >
+              <FlaskConical className="w-3.5 h-3.5 text-cyan-300" />
+              <span>Kiểm Thử AI (STEM Lab)</span>
             </button>
           </div>
         )}

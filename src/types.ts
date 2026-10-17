@@ -212,3 +212,121 @@ export interface WasteReportSubmissionPayload {
   image: string; // base64 or URL
 }
 
+// ==============================================================================
+// AI ACCURACY BENCHMARK & TESTING LAB TYPES (STEM EMPIRICAL EVALUATION)
+// ==============================================================================
+
+export type BenchmarkCategory = 'organic' | 'recyclable' | 'inorganic' | 'special_hazardous' | 'uncertain';
+
+export type HandlingSuitability = 'suitable' | 'unsuitable' | 'needs_adjustment' | 'unreviewed';
+
+export type EdgeCaseType =
+  | 'tetra_pak'
+  | 'liquid_cup'
+  | 'oily_paper'
+  | 'old_battery'
+  | 'greasy_plastic'
+  | 'multilayer_packaging'
+  | 'none'
+  | 'other';
+
+export interface BenchmarkTestSample {
+  id: string; // e.g. "sample-1", "TST-001"
+  sampleCode: string; // "TST-001"
+  itemName: string; // Tên vật thể thực tế
+  image?: string; // base64 or image URL
+  thumbnail?: string;
+
+  // Ground truth by human evaluator
+  groundTruthCategory: BenchmarkCategory;
+  groundTruthNotes?: string;
+  isDifficultOrEdgeCase?: boolean;
+  edgeCaseType?: EdgeCaseType;
+
+  // Evaluation Mode / Blind status
+  isGroundTruthLocked: boolean; // Evaluator confirmed ground truth before seeing AI
+  hasRunAI: boolean;
+
+  // AI Prediction Result
+  predictedCategory?: BenchmarkCategory;
+  aiConfidence?: number; // 0.0 - 1.0 (Độ tin cậy AI)
+  isUncertain?: boolean;
+  uncertaintyReason?: string;
+  isHazardousOrSpecial?: boolean;
+  hasLiquid?: boolean;
+  requiresRescanEmpty?: boolean;
+  rawAiCategory?: string;
+
+  // AI Recommended Handling Steps
+  aiRecommendedSteps?: PreparationStep[];
+  aiHandlingSummary?: string;
+  specialHandlingNotice?: string;
+
+  // Evaluator Review of AI Handling Suitability
+  handlingSuitability: HandlingSuitability;
+  evaluatorHandlingNotes?: string;
+
+  // Timestamps
+  createdAt: number;
+  evaluatedAt?: number;
+  evaluatorName?: string;
+}
+
+export interface CategoryEvaluationMetric {
+  category: BenchmarkCategory;
+  label: string;
+  totalGroundTruth: number;
+  testedCount: number;
+  correctCount: number;
+  incorrectCount: number;
+  uncertainCount: number;
+  accuracyRate: number; // 0 - 100%
+  precision: number; // 0 - 100%
+  recall: number; // 0 - 100%
+}
+
+export interface BenchmarkStats {
+  targetCount: number; // 30
+  actualCreatedCount: number;
+  actualTestedCount: number; // Đã chạy AI
+  correctCount: number;
+  incorrectCount: number;
+  uncertainOrRejectedCount: number;
+  empiricalAccuracyRate: number; // (correctCount / actualTestedCount) * 100
+  averageAiConfidence: number; // Mean AI confidence (0 - 100%)
+
+  // Breakdown by ground truth categories
+  categories: Record<BenchmarkCategory, CategoryEvaluationMetric>;
+
+  // Handling steps suitability
+  handlingStats: {
+    totalReviewed: number;
+    suitableCount: number;
+    needsAdjustmentCount: number;
+    unsuitableCount: number;
+    suitabilityRate: number; // (suitableCount / totalReviewed) * 100
+  };
+
+  // Tricky edge cases analysis
+  edgeCaseStats: {
+    totalTarget: number;
+    totalTested: number;
+    correctCount: number;
+    accuracyRate: number;
+    items: {
+      type: EdgeCaseType;
+      label: string;
+      tested: number;
+      correct: number;
+    }[];
+  };
+
+  // Confusion matrix [groundTruth][predicted]
+  confusionMatrix: {
+    rowLabels: BenchmarkCategory[]; // Ground truth
+    colLabels: BenchmarkCategory[]; // AI Predicted
+    matrix: Record<BenchmarkCategory, Record<BenchmarkCategory, number>>;
+  };
+}
+
+

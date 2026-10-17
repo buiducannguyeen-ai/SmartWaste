@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 
 export interface StoredPlayer {
@@ -105,6 +106,44 @@ export interface StoredFingerprintRecord {
   screenSpoofScore?: number;
 }
 
+/**
+ * Server-authoritative Pending Scan Session.
+ * Only legitimate scans created by server-side AI receive a scanId.
+ * Points can only be awarded once, with strict validation against this session.
+ */
+export interface PendingScanSession {
+  scanId: string;
+  userId: string;
+  userIp?: string;
+  itemName: string;
+  category: 'organic' | 'recyclable' | 'inorganic';
+  points: number;
+  confidence: number;
+  isWaste: boolean;
+  isUncertain: boolean;
+  isHazardousOrSpecial: boolean;
+  requiresRescanEmpty: boolean;
+  status: 'pending' | 'completed' | 'expired' | 'rejected';
+  createdAt: number;
+  expiresAt: number;
+  completedAt?: number;
+}
+
+/**
+ * Server-managed daily scan quota record.
+ * Keyed by userId and dateKey (YYYY-MM-DD in Asia/Ho_Chi_Minh).
+ * Resets strictly at 00:00 midnight Vietnam time.
+ */
+export interface UserQuotaRecord {
+  userId: string;
+  dateKey: string;
+  usedScans: number;
+  remainingScans: number;
+  lastScanAt: number;
+}
+
+export const DAILY_SCAN_LIMIT = Number(process.env.DAILY_SCAN_LIMIT) || 30;
+
 interface StoreData {
   players: StoredPlayer[];
   history: StoredHistoryItem[];
@@ -112,6 +151,8 @@ interface StoreData {
   misclassifications?: StoredMisclassificationFeedback[];
   processedScanIds?: string[];
   fingerprints?: StoredFingerprintRecord[];
+  pendingScans?: Record<string, PendingScanSession>;
+  quotas?: Record<string, UserQuotaRecord>;
 }
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -152,6 +193,8 @@ let cachedData: StoreData = {
   misclassifications: [],
   processedScanIds: [],
   fingerprints: [],
+  pendingScans: {},
+  quotas: {},
 };
 
 const processedScanIdsSet = new Set<string>();
@@ -188,6 +231,8 @@ function loadDataFromDisk(): boolean {
           misclassifications: Array.isArray(parsed.misclassifications) ? parsed.misclassifications : [],
           processedScanIds: Array.isArray(parsed.processedScanIds) ? parsed.processedScanIds : [],
           fingerprints: Array.isArray(parsed.fingerprints) ? parsed.fingerprints : [],
+          pendingScans: (parsed.pendingScans && typeof parsed.pendingScans === 'object') ? parsed.pendingScans : {},
+          quotas: (parsed.quotas && typeof parsed.quotas === 'object') ? parsed.quotas : {},
         };
         processedScanIdsSet.clear();
         for (const id of cachedData.processedScanIds || []) {
@@ -299,6 +344,14 @@ export function upsertPlayer(profile: {
   return newPlayer;
 }
 
+export function getPlayer(idOrEmail: string): StoredPlayer | undefined {
+  if (!idOrEmail) return undefined;
+  const clean = idOrEmail.trim().toLowerCase();
+  return cachedData.players.find(
+    (p) => (p.id && p.id === idOrEmail) || (p.email && p.email.trim().toLowerCase() === clean)
+  );
+}
+
 export async function resetAllPlayerPoints(): Promise<{
   count: number;
   leaderboard: (StoredPlayer & { levelTitle: string })[];
@@ -356,6 +409,174 @@ export async function resetAllPlayerPoints(): Promise<{
   };
 }
 
+/**
+ * Compute SHA-256 checksum server-side directly from image data.
+ * Does not trust client-declared checksums.
+ */
+export function computeServerImageChecksum(data: string): string {
+  if (!data) return '0000000000000000';
+  const raw = data.includes(',') ? data.split(',')[1] : data;
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
+/**
+ * Find existing stored fingerprint by exact server-calculated checksum
+ */
+export function findStoredFingerprintByChecksum(checksum: string): StoredFingerprintRecord | undefined {
+  if (!checksum || !cachedData.fingerprints) return undefined;
+  return cachedData.fingerprints.find((fp) => fp.checksum === checksum);
+}
+
+/**
+ * Returns YYYY-MM-DD date key in Asia/Ho_Chi_Minh timezone
+ */
+export function getVietnamDateKey(now: Date = new Date()): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(now);
+}
+
+/**
+ * Get current daily scan quota status for a user/guest
+ */
+export function getScanQuota(userId: string, now: Date = new Date()): {
+  limit: number;
+  used: number;
+  remaining: number;
+  dateKey: string;
+} {
+  if (!cachedData.quotas) cachedData.quotas = {};
+  const dateKey = getVietnamDateKey(now);
+  const record = cachedData.quotas[userId];
+  if (!record || record.dateKey !== dateKey) {
+    return {
+      limit: DAILY_SCAN_LIMIT,
+      used: 0,
+      remaining: DAILY_SCAN_LIMIT,
+      dateKey,
+    };
+  }
+  return {
+    limit: DAILY_SCAN_LIMIT,
+    used: record.usedScans,
+    remaining: Math.max(0, DAILY_SCAN_LIMIT - record.usedScans),
+    dateKey,
+  };
+}
+
+/**
+ * Atomically check and consume 1 scan quota turn.
+ * Resets automatically when date advances past 00:00 Asia/Ho_Chi_Minh.
+ */
+export function consumeScanQuota(userId: string, now: Date = new Date()): {
+  allowed: boolean;
+  limit: number;
+  used: number;
+  remaining: number;
+  dateKey: string;
+  reason?: string;
+} {
+  if (!cachedData.quotas) cachedData.quotas = {};
+  const dateKey = getVietnamDateKey(now);
+  let record = cachedData.quotas[userId];
+
+  // If no record or date is from a previous calendar day, reset quota for the new day
+  if (!record || record.dateKey !== dateKey) {
+    record = {
+      userId,
+      dateKey,
+      usedScans: 0,
+      remainingScans: DAILY_SCAN_LIMIT,
+      lastScanAt: now.getTime(),
+    };
+    cachedData.quotas[userId] = record;
+  }
+
+  // Atomic check before calling AI
+  if (record.usedScans >= DAILY_SCAN_LIMIT) {
+    return {
+      allowed: false,
+      limit: DAILY_SCAN_LIMIT,
+      used: record.usedScans,
+      remaining: 0,
+      dateKey,
+      reason: `Bạn đã đạt giới hạn ${DAILY_SCAN_LIMIT} lượt quét AI trong ngày hôm nay. Hạn mức sẽ tự động được làm mới vào lúc 00:00 ngày mai (giờ Việt Nam).`,
+    };
+  }
+
+  record.usedScans += 1;
+  record.remainingScans = Math.max(0, DAILY_SCAN_LIMIT - record.usedScans);
+  record.lastScanAt = now.getTime();
+  saveDataToDisk();
+
+  return {
+    allowed: true,
+    limit: DAILY_SCAN_LIMIT,
+    used: record.usedScans,
+    remaining: record.remainingScans,
+    dateKey,
+  };
+}
+
+/**
+ * Creates a server-authoritative pending scan session.
+ * Scan sessions expire after 15 minutes and can only be credited once.
+ */
+export function createPendingScanSession(params: {
+  userId: string;
+  userIp?: string;
+  itemName: string;
+  category: 'organic' | 'recyclable' | 'inorganic';
+  points: number;
+  confidence: number;
+  isWaste: boolean;
+  isUncertain: boolean;
+  isHazardousOrSpecial?: boolean;
+  requiresRescanEmpty?: boolean;
+}): PendingScanSession {
+  if (!cachedData.pendingScans) cachedData.pendingScans = {};
+  const scanId = `scan-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  const now = Date.now();
+  const session: PendingScanSession = {
+    scanId,
+    userId: params.userId,
+    userIp: params.userIp,
+    itemName: params.itemName,
+    category: params.category,
+    points: params.requiresRescanEmpty ? 0 : params.points,
+    confidence: params.confidence,
+    isWaste: params.isWaste,
+    isUncertain: params.isUncertain,
+    isHazardousOrSpecial: Boolean(params.isHazardousOrSpecial),
+    requiresRescanEmpty: Boolean(params.requiresRescanEmpty),
+    status: (params.isUncertain || !params.isWaste) ? 'rejected' : 'pending',
+    createdAt: now,
+    expiresAt: now + 15 * 60 * 1000, // Valid for 15 minutes
+  };
+
+  cachedData.pendingScans[scanId] = session;
+  saveDataToDisk();
+  return session;
+}
+
+export function getPendingScanSession(scanId: string): PendingScanSession | undefined {
+  if (!cachedData.pendingScans) return undefined;
+  return cachedData.pendingScans[scanId];
+}
+
+/**
+ * Securely records classification points with rigorous server-side verification:
+ * 1. scanId must exist in server's pending sessions.
+ * 2. scanId must not have been already credited (idempotency).
+ * 3. scanId must not be expired (>15 min).
+ * 4. Scan must have been valid (not uncertain, not rejected).
+ * 5. Points awarded are strictly server-computed session points (client cannot dictate points or category).
+ * 6. Atomic transition to completed.
+ */
 export function recordClassification(params: {
   scanId?: string;
   userId?: string;
@@ -363,58 +584,139 @@ export function recordClassification(params: {
   email?: string;
   organization?: string;
   avatar?: string;
-  itemName: string;
-  category: 'organic' | 'recyclable' | 'inorganic';
-  points: number;
+  itemName?: string;
+  category?: 'organic' | 'recyclable' | 'inorganic';
+  points?: number;
   confidence?: number;
   source?: string;
   preparationSteps?: StoredPreparationStep[];
   specialHandlingNotice?: string;
 }): {
-  player: StoredPlayer;
-  leaderboard: (StoredPlayer & { levelTitle: string })[];
+  success: boolean;
+  player?: StoredPlayer;
+  leaderboard?: (StoredPlayer & { levelTitle: string })[];
   alreadyProcessed?: boolean;
+  pointsAwarded?: number;
+  error?: string;
 } {
+  const uid = params.userId || 'guest';
+
+  // 1. MUST HAVE SCAN ID
+  if (!params.scanId) {
+    return {
+      success: false,
+      error: 'Yêu cầu không hợp lệ: Thiếu mã định danh lượt quét (scanId) được cấp từ máy chủ.',
+    };
+  }
+
+  // 2. IDEMPOTENCY CHECK: If already credited, do NOT award duplicate points
+  if (processedScanIdsSet.has(params.scanId)) {
+    console.log(`[EcoSort Store] scanId ${params.scanId} already processed. Idempotent return without duplicate points.`);
+    const player = getPlayer(uid) || upsertPlayer({
+      id: uid,
+      name: params.userName,
+      email: params.email,
+      organization: params.organization,
+      avatar: params.avatar,
+    });
+    return {
+      success: true,
+      player,
+      leaderboard: getLeaderboard(),
+      alreadyProcessed: true,
+      pointsAwarded: 0,
+    };
+  }
+
+  // 3. LOOKUP PENDING SCAN SESSION IN SERVER STORE
+  if (!cachedData.pendingScans) cachedData.pendingScans = {};
+  const session = cachedData.pendingScans[params.scanId];
+
+  if (!session) {
+    return {
+      success: false,
+      error: 'Phát hiện yêu cầu không hợp lệ: scanId không tồn tại hoặc chưa từng được hệ thống AI phân tích hợp lệ.',
+    };
+  }
+
+  // 4. VERIFY STATUS & INTEGRITY
+  if (session.status === 'completed') {
+    processedScanIdsSet.add(params.scanId);
+    const player = getPlayer(uid) || upsertPlayer({
+      id: uid,
+      name: params.userName,
+      email: params.email,
+      organization: params.organization,
+      avatar: params.avatar,
+    });
+    return {
+      success: true,
+      player,
+      leaderboard: getLeaderboard(),
+      alreadyProcessed: true,
+      pointsAwarded: 0,
+    };
+  }
+
+  if (session.status === 'rejected' || session.isUncertain || !session.isWaste) {
+    return {
+      success: false,
+      error: 'Lượt quét này không đủ điều kiện tích điểm (AI chưa chắc chắn hoặc phát hiện ảnh gian lận/không phải rác).',
+    };
+  }
+
+  if (Date.now() > session.expiresAt) {
+    session.status = 'expired';
+    saveDataToDisk();
+    return {
+      success: false,
+      error: 'Lượt quét đã hết hạn (>15 phút). Vui lòng quét lại vật thể thật để nhận điểm.',
+    };
+  }
+
+  if (session.requiresRescanEmpty && session.points === 0) {
+    return {
+      success: false,
+      error: 'Chai hoặc ly còn nước thừa chưa đạt chuẩn tái chế. Hãy đổ cạn nước và quét camera nghiệm thu trước khi tích điểm.',
+    };
+  }
+
+  // Verify ownership (allow guest claiming if matching guest prefix or session.userId)
+  if (session.userId && session.userId !== uid && !session.userId.startsWith('guest_') && !uid.startsWith('guest_')) {
+    return {
+      success: false,
+      error: 'scanId này thuộc về tài khoản học sinh khác, không thể nhận điểm thay.',
+    };
+  }
+
+  // ATOMIC LOCK: Mark session as completed
+  session.status = 'completed';
+  session.completedAt = Date.now();
+  processedScanIdsSet.add(params.scanId);
+  if (!cachedData.processedScanIds) cachedData.processedScanIds = [];
+  cachedData.processedScanIds.push(params.scanId);
+  if (cachedData.processedScanIds.length > 2000) {
+    cachedData.processedScanIds = cachedData.processedScanIds.slice(-2000);
+  }
+
+  // AUTHORITATIVE SERVER POINTS (Client cannot dictate points or category!)
+  const pts = session.points;
+  const category = session.category;
+  const itemName = session.itemName;
+
   const player = upsertPlayer({
-    id: params.userId,
+    id: uid,
     name: params.userName,
     email: params.email,
     organization: params.organization,
     avatar: params.avatar,
   });
 
-  // IDEMPOTENCY CHECK: If scanId was already credited, never award duplicate points
-  if (params.scanId && processedScanIdsSet.has(params.scanId)) {
-    console.log(`[EcoSort Store] scanId ${params.scanId} already processed. Returning without awarding duplicate points.`);
-    return {
-      player,
-      leaderboard: getLeaderboard(),
-      alreadyProcessed: true,
-    };
-  }
-
-  // Ensure valid points (Hữu cơ: 1, Tái chế: 2, Vô cơ: 3)
-  let pts = params.points;
-  if (params.category === 'organic') pts = 1;
-  else if (params.category === 'recyclable') pts = 2;
-  else if (params.category === 'inorganic') pts = 3;
-
-  if (params.scanId) {
-    processedScanIdsSet.add(params.scanId);
-    if (!cachedData.processedScanIds) {
-      cachedData.processedScanIds = [];
-    }
-    cachedData.processedScanIds.push(params.scanId);
-    if (cachedData.processedScanIds.length > 2000) {
-      cachedData.processedScanIds = cachedData.processedScanIds.slice(-2000);
-    }
-  }
-
   player.totalPoints += pts;
   player.correctCount += 1;
-  if (params.category === 'organic') player.organicCount += 1;
-  else if (params.category === 'recyclable') player.recyclableCount += 1;
-  else if (params.category === 'inorganic') player.inorganicCount += 1;
+  if (category === 'organic') player.organicCount += 1;
+  else if (category === 'recyclable') player.recyclableCount += 1;
+  else if (category === 'inorganic') player.inorganicCount += 1;
   player.lastActive = Date.now();
 
   const historyItem: StoredHistoryItem = {
@@ -422,10 +724,10 @@ export function recordClassification(params: {
     scanId: params.scanId,
     userId: player.id,
     userName: player.name,
-    itemName: params.itemName,
-    category: params.category,
+    itemName,
+    category,
     points: pts,
-    confidence: params.confidence || 0.95,
+    confidence: session.confidence || 0.95,
     source: params.source || 'webcam',
     timestamp: Date.now(),
     preparationSteps: params.preparationSteps,
@@ -433,7 +735,6 @@ export function recordClassification(params: {
   };
 
   cachedData.history.unshift(historyItem);
-  // Keep last 300 logs
   if (cachedData.history.length > 300) {
     cachedData.history = cachedData.history.slice(0, 300);
   }
@@ -441,15 +742,16 @@ export function recordClassification(params: {
   saveDataToDisk();
   notifyListeners('points_awarded', historyItem);
 
-  // Background sync to Supabase players table
   syncToSupabase(player, historyItem).catch((e) => {
     console.warn('Background Supabase sync notice:', e);
   });
 
   return {
+    success: true,
     player,
     leaderboard: getLeaderboard(),
     alreadyProcessed: false,
+    pointsAwarded: pts,
   };
 }
 
